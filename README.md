@@ -58,8 +58,11 @@ This init step:
 
 - saves the zrok token
 - saves the SSH public key
+- captures the current Kaggle notebook environment for later SSH sessions
 - starts `sshd`
 - starts the private zrok share
+
+You do not need to run extra prep like `chmod +x ...` or `printenv > /kaggle/working/kaggle_env_vars.txt` manually. `zrok_server.py` now does that before calling `setup_ssh.sh`.
 
 ### Step 3: Keep Kaggle running
 
@@ -101,6 +104,7 @@ After init has succeeded once, each later session is only two steps.
 ```
 
 This reuses the saved token and saved SSH auth config from `/kaggle/working/.kaggle_remote_zrok`.
+It also refreshes `/kaggle/working/kaggle_env_vars.txt` automatically before starting SSH.
 
 ### Step 2: Start Windows side
 

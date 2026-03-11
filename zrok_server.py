@@ -8,9 +8,11 @@ from pathlib import Path
 from utils import Zrok
 import string
 import random
+import stat
 
 DEFAULT_STATE_DIR = "/kaggle/working/.kaggle_remote_zrok"
 DEFAULT_AUTHORIZED_KEYS_PATH = "/kaggle/working/.ssh/authorized_keys"
+DEFAULT_ENV_VARS_PATH = "/kaggle/working/kaggle_env_vars.txt"
 
 
 def generate_random_password(length=16):
@@ -78,6 +80,30 @@ def copy_persisted_authorized_keys(state_dir: str, live_path: str):
     return True
 
 
+def ensure_executable(path: Path):
+    if not path.exists():
+        return
+
+    current_mode = path.stat().st_mode
+    executable_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    path.chmod(current_mode | executable_bits)
+
+
+def prepare_kaggle_runtime_files():
+    repo_root = Path(__file__).resolve().parent
+    ensure_executable(repo_root / "setup_ssh.sh")
+    ensure_executable(Path(__file__).resolve())
+
+    env_dump_path = Path(DEFAULT_ENV_VARS_PATH)
+    env_dump_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(env_dump_path, "w", encoding="utf-8", newline="\n") as f:
+        for key in sorted(os.environ):
+            value = os.environ[key]
+            if "\n" in value or "\r" in value:
+                continue
+            f.write(f"{key}={value}\n")
+
+
 def build_runtime_config(args):
     if args.start:
         config = load_saved_config(args.state_dir)
@@ -139,6 +165,7 @@ def main(args):
     zrok.enable()
 
     copy_persisted_authorized_keys(runtime["state_dir"], DEFAULT_AUTHORIZED_KEYS_PATH)
+    prepare_kaggle_runtime_files()
     
     # Setup SSH server
     print("Setting up SSH server...")
