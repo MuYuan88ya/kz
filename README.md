@@ -31,21 +31,63 @@ Optional:
 
 ## Server Side Usage
 
-### Copy-paste commands for Kaggle
+### Recommended persistent workflow
 
-If you want the complete server-side flow as commands you can copy directly into Kaggle, use this:
+Because Kaggle notebook files under `/kaggle/working` persist, the server side now supports:
+
+- one-time initialization with `--init`
+- later starts with `--start`
+
+The persistent state is stored in:
+
+```text
+/kaggle/working/.kaggle_remote_zrok
+```
+
+### First-time init in Kaggle
+
+Recommended mode: SSH public key login, no password prompts.
+
+If your local machine does not already have `~/.ssh/kaggle_rsa`, run `start_client.bat` once locally. It will generate the key pair automatically.
+
+Then print your public key on Windows:
+
+```powershell
+Get-Content $env:USERPROFILE\.ssh\kaggle_rsa.pub -Raw
+```
+
+Copy that single-line public key and paste it into this Kaggle command:
 
 ```bash
 !git clone https://github.com/MuYuan88ya/kz.git /kaggle/working/kz
 %cd /kaggle/working/kz
-!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0"
+!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --authorized_key "PASTE_YOUR_PUBLIC_KEY_HERE"
 ```
 
-If the repository is already present in `/kaggle/working/kz`, you only need:
+What `--init` does:
+
+- saves your zrok token
+- saves your SSH auth configuration
+- starts SSH and the private zrok share immediately
+
+### Later starts in Kaggle
+
+After the first init, later sessions only need:
 
 ```bash
 %cd /kaggle/working/kz
-!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0"
+!python3 zrok_server.py --start
+```
+
+This reuses the saved token and saved SSH auth config from `/kaggle/working/.kaggle_remote_zrok`.
+
+### Password-based init
+
+If you still prefer password login, initialize once like this:
+
+```bash
+%cd /kaggle/working/kz
+!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --password "0"
 ```
 
 What it does:
@@ -61,12 +103,14 @@ Important:
 - Do not stop the cell after it starts the share
 - The default server environment name is `kaggle_server`
 - The default SSH port is `22`
+- `--start` expects that `--init` has already been run at least once in the same notebook storage
 
 Optional arguments:
 
 ```bash
-!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0" --name "kaggle_server"
-!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --authorized_keys_url "https://example.com/authorized_keys"
+!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --name "kaggle_server"
+!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --authorized_keys_url "https://example.com/authorized_keys"
+!python3 zrok_server.py --start --name "kaggle_server"
 ```
 
 If you want key-based authentication, upload your public key somewhere reachable and pass it with `--authorized_keys_url`.
@@ -75,7 +119,7 @@ Example with `authorized_keys`:
 
 ```bash
 %cd /kaggle/working/kz
-!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0" --authorized_keys_url "https://example.com/authorized_keys"
+!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --authorized_keys_url "https://example.com/authorized_keys"
 ```
 
 ## Client Side Usage
@@ -139,13 +183,14 @@ To clear the saved token, delete:
 Recommended flow:
 
 1. Double-click `start_client.bat`
-2. Paste your zrok token into the console window
-3. Press Enter
-4. Wait for the tunnel and VS Code Remote SSH to open
+2. On the first run, let it cache your token and generate `~/.ssh/kaggle_rsa`
+3. Wait for the tunnel and VS Code Remote SSH to open
 
 It will:
 
 - ask for your zrok token at runtime
+- cache the token for later runs
+- auto-generate `~/.ssh/kaggle_rsa` if it does not exist yet
 - enable a local zrok client environment
 - find the `kaggle_server` share
 - start `zrok access private ...` on local port `9191`
@@ -170,11 +215,21 @@ python zrok_client.py --token "YOUR_ZROK_TOKEN" --workspace "/kaggle/working"
 
 ## End-to-end Flow
 
+### First time
+
 1. Install local prerequisites, especially `zrok` and VS Code Remote SSH.
-2. Start the Kaggle server cell and keep it running.
-3. On your local machine, run `start_client.bat` or `python zrok_client.py --token "YOUR_ZROK_TOKEN"`.
-4. Wait for the local private access tunnel to bind to `127.0.0.1:9191`.
-5. VS Code opens the remote host `kaggle_client`.
+2. Run `start_client.bat` once on Windows so it can cache your token and generate `~/.ssh/kaggle_rsa`.
+3. Copy the contents of `~/.ssh/kaggle_rsa.pub`.
+4. In Kaggle, run `zrok_server.py --init --token ... --authorized_key "..."`.
+5. Keep the Kaggle cell running.
+6. Run `start_client.bat` locally and connect.
+
+### Later sessions
+
+1. In Kaggle, run `zrok_server.py --start`.
+2. Keep the Kaggle cell running.
+3. On your local machine, double-click `start_client.bat`.
+4. VS Code opens the remote host `kaggle_client`.
 
 If you prefer not to use the batch file, this command is equivalent:
 
@@ -191,12 +246,13 @@ Host kaggle_client
     HostName 127.0.0.1
     User root
     Port 9191
-    IdentityFile ~/.ssh/kaggle_rsa
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 ```
 
-If you use password login, the password is whatever you passed to `zrok_server.py`, for example `0`.
+If `~/.ssh/kaggle_rsa` exists, the client uses key-based login.
+
+If it does not exist, the client switches to password authentication automatically.
 
 ## Troubleshooting
 
@@ -216,6 +272,7 @@ zrok enable YOUR_ZROK_TOKEN
 - The Kaggle cell is not running
 - The server environment name does not match `--server_name`
 - The server process did not finish creating the private share
+- You ran `--start` before ever running `--init`
 
 ### `zrok` not found on Windows
 

@@ -17,6 +17,10 @@ set "SERVER_NAME=kaggle_server"
 set "WORKSPACE=/kaggle/working"
 set "TOKEN_CACHE_DIR=%USERPROFILE%\.kaggle_remote_zrok"
 set "TOKEN_CACHE_FILE=%TOKEN_CACHE_DIR%\zrok_token.txt"
+set "SSH_DIR=%USERPROFILE%\.ssh"
+set "KAGGLE_KEY=%SSH_DIR%\kaggle_rsa"
+set "KAGGLE_PUBKEY=%SSH_DIR%\kaggle_rsa.pub"
+set "NEW_KAGGLE_KEY="
 
 set "PATH=%CD%;%PATH%"
 
@@ -77,6 +81,16 @@ if not defined ZROK_EXE (
     exit /b 1
 )
 
+if not exist "%KAGGLE_KEY%" (
+    where ssh-keygen >nul 2>nul
+    if not errorlevel 1 (
+        if not exist "%SSH_DIR%" mkdir "%SSH_DIR%" >nul 2>nul
+        echo Generating SSH key for Kaggle at "%KAGGLE_KEY%"...
+        ssh-keygen -t rsa -b 4096 -f "%KAGGLE_KEY%" -N "" >nul
+        if not errorlevel 1 set "NEW_KAGGLE_KEY=1"
+    )
+)
+
 set "TOKEN=%ZROK_TOKEN%"
 if not defined TOKEN if exist "%TOKEN_CACHE_FILE%" set /p TOKEN=<"%TOKEN_CACHE_FILE%"
 if not defined TOKEN set /p TOKEN=Enter your zrok token:
@@ -89,6 +103,13 @@ if not defined TOKEN (
 if not exist "%TOKEN_CACHE_DIR%" mkdir "%TOKEN_CACHE_DIR%" >nul 2>nul
 > "%TOKEN_CACHE_FILE%" (
     echo %TOKEN%
+)
+
+if defined NEW_KAGGLE_KEY if exist "%KAGGLE_PUBKEY%" (
+    echo.
+    echo New local Kaggle public key:
+    type "%KAGGLE_PUBKEY%"
+    echo.
 )
 
 "%PYTHON_EXE%" zrok_client.py --token "%TOKEN%" --name "%NAME%" --server_name "%SERVER_NAME%" --workspace "%WORKSPACE%"
