@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 import socket
+import shutil
 from utils import Zrok
 
 
@@ -17,6 +18,33 @@ def wait_for_local_access(port: int, timeout: int = 15):
                 return True
         except OSError:
             time.sleep(1)
+    return False
+
+
+def resolve_ssh_executable():
+    resolved = shutil.which("ssh")
+    if resolved:
+        return resolved
+
+    windows_ssh = Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+    if windows_ssh.exists():
+        return str(windows_ssh)
+
+    return "ssh"
+
+
+def wait_for_ssh_ready(host: str, timeout: int = 20):
+    ssh_exe = resolve_ssh_executable()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = subprocess.run(
+            [ssh_exe, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "exit"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True
+        time.sleep(1)
     return False
 
 
@@ -136,6 +164,9 @@ def main(args):
             capture_output=True,
             text=True,
         )
+
+    if not wait_for_ssh_ready(args.name, timeout=20):
+        raise Exception(f"Timed out waiting for SSH login on host {args.name}")
 
     # 5. Launch VS Code remote-SSH
     if not args.no_vscode:
