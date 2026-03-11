@@ -102,9 +102,7 @@ start_ssh_service() {
 }
 
 cleanup() {
-    if [ -f "$ENV_VARS_FILE" ]; then
-        rm -f "$ENV_VARS_FILE"
-    fi
+    echo "Keeping $ENV_VARS_FILE for later SSH sessions"
     return 0
 }
 

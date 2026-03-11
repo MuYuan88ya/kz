@@ -96,12 +96,12 @@ def prepare_kaggle_runtime_files():
 
     env_dump_path = Path(DEFAULT_ENV_VARS_PATH)
     env_dump_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(env_dump_path, "w", encoding="utf-8", newline="\n") as f:
-        for key in sorted(os.environ):
-            value = os.environ[key]
-            if "\n" in value or "\r" in value:
-                continue
-            f.write(f"{key}={value}\n")
+    subprocess.run(
+        f"printenv > {env_dump_path}",
+        shell=True,
+        executable="/bin/bash",
+        check=True,
+    )
 
 
 def build_runtime_config(args):

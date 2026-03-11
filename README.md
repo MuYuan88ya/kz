@@ -62,7 +62,7 @@ This init step:
 - starts `sshd`
 - starts the private zrok share
 
-You do not need to run extra prep like `chmod +x ...` or `printenv > /kaggle/working/kaggle_env_vars.txt` manually. `zrok_server.py` now does that before calling `setup_ssh.sh`, and `setup_ssh.sh` will regenerate the environment dump itself if it is missing.
+You do not need to run extra prep like `chmod +x ...` or `printenv > /kaggle/working/kaggle_env_vars.txt` manually. `zrok_server.py` now runs that `printenv` capture itself before calling `setup_ssh.sh`, and the environment dump is kept in `/kaggle/working` for later SSH sessions.
 
 ### Step 3: Keep Kaggle running
 
