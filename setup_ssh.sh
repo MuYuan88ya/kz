@@ -20,6 +20,9 @@ if [ -f "$ENV_VARS_FILE" ]; then
     export_env_vars_from_file "$ENV_VARS_FILE"
 else
     echo "Environment variables file $ENV_VARS_FILE not found"
+    echo "Capturing current environment variables to $ENV_VARS_FILE"
+    printenv > "$ENV_VARS_FILE"
+    export_env_vars_from_file "$ENV_VARS_FILE"
 fi
 
 # Make authorized keys URL optional
@@ -99,7 +102,10 @@ start_ssh_service() {
 }
 
 cleanup() {
-    [ -f /kaggle/working/kaggle_env_vars.txt ] && rm /kaggle/working/kaggle_env_vars.txt
+    if [ -f "$ENV_VARS_FILE" ]; then
+        rm -f "$ENV_VARS_FILE"
+    fi
+    return 0
 }
 
 install_packages
