@@ -62,9 +62,11 @@ echo Public key:
 type "%KAGGLE_PUBKEY%"
 echo.
 echo Kaggle first-time init command:
-echo !python3 zrok_server.py --init --token "%TOKEN%" --authorized_key "!PUBLIC_KEY!"
+setlocal DisableDelayedExpansion
+echo ^!python3 zrok_server.py --init --token "%TOKEN%" --authorized_key "%PUBLIC_KEY%"
 echo.
 echo Kaggle later-start command:
-echo !python3 zrok_server.py --start
+echo ^!python3 zrok_server.py --start
+endlocal
 echo.
 pause
