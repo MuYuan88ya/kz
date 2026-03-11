@@ -7,7 +7,15 @@ import sys
 from pathlib import Path
 import socket
 import shutil
+import json
 from utils import Zrok
+
+
+DEFAULT_REMOTE_EXTENSIONS = [
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "openai.chatgpt",
+]
 
 
 def wait_for_local_access(port: int, timeout: int = 15):
@@ -46,6 +54,47 @@ def wait_for_ssh_ready(host: str, timeout: int = 20):
             return True
         time.sleep(1)
     return False
+
+
+def update_vscode_remote_extensions():
+    if os.name != "nt":
+        return
+
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        print("APPDATA not set; skipping VS Code settings update")
+        return
+
+    settings_path = Path(appdata) / "Code" / "User" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if settings_path.exists():
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                settings = json.loads(content) if content else {}
+        except Exception:
+            print(f"Could not parse VS Code settings at {settings_path}; skipping extension defaults update")
+            return
+    else:
+        settings = {}
+
+    current = settings.get("remote.SSH.defaultExtensions", [])
+    if not isinstance(current, list):
+        current = []
+
+    merged = list(current)
+    for extension in DEFAULT_REMOTE_EXTENSIONS:
+        if extension not in merged:
+            merged.append(extension)
+
+    settings["remote.SSH.defaultExtensions"] = merged
+
+    with open(settings_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+
+    print("VS Code remote extension defaults updated")
 
 
 def main(args):
@@ -167,6 +216,8 @@ def main(args):
 
     if not wait_for_ssh_ready(args.name, timeout=20):
         raise Exception(f"Timed out waiting for SSH login on host {args.name}")
+
+    update_vscode_remote_extensions()
 
     # 5. Launch VS Code remote-SSH
     if not args.no_vscode:

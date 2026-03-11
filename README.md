@@ -80,10 +80,7 @@ That script:
 - installs `nodejs` and `npm` if needed
 - installs `@openai/codex`
 - adds the persistent npm bin directory to root's PATH
-- starts a background watcher that waits for `~/.vscode-server` and then installs:
-  - `ms-python.python`
-  - `ms-toolsai.jupyter`
-  - `openai.chatgpt`
+- keeps a fallback watcher for remote VS Code extension installs
 
 Logs are written to:
 
@@ -119,6 +116,10 @@ If everything is correct, it will:
 - find the `kaggle_server` share
 - open local access on `127.0.0.1:9191`
 - update `%USERPROFILE%\.ssh\config`
+- update local VS Code `remote.SSH.defaultExtensions` with:
+  - `ms-python.python`
+  - `ms-toolsai.jupyter`
+  - `openai.chatgpt`
 - open VS Code Remote SSH
 
 ### Password-based init
