@@ -3,15 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-REM zrok lookup order:
-REM 1. zrok from PATH
-REM 2. zrok.exe in this project directory
-REM 3. ZROK_BIN environment variable
-REM Token lookup order:
-REM 1. ZROK_TOKEN environment variable
-REM 2. local cached token file in user profile
-REM 3. pasted into the console when prompted
-
+REM ── Configuration ─────────────────────────────────────────────────
 set "NAME=kaggle_client"
 set "SERVER_NAME=kaggle_server"
 set "WORKSPACE=/kaggle/working"
@@ -24,19 +16,12 @@ set "NEW_KAGGLE_KEY="
 
 set "PATH=%CD%;%PATH%"
 
+REM ── Find Python ───────────────────────────────────────────────────
 set "PYTHON_EXE="
 if exist "%CD%\.venv\Scripts\python.exe" set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
 if not defined PYTHON_EXE if exist "%LocalAppData%\Programs\Python\Python311\python.exe" set "PYTHON_EXE=%LocalAppData%\Programs\Python\Python311\python.exe"
-
-if not defined PYTHON_EXE (
-    where py >nul 2>nul
-    if not errorlevel 1 set "PYTHON_EXE=py"
-)
-
-if not defined PYTHON_EXE (
-    where python >nul 2>nul
-    if not errorlevel 1 set "PYTHON_EXE=python"
-)
+if not defined PYTHON_EXE (where py >nul 2>nul && set "PYTHON_EXE=py")
+if not defined PYTHON_EXE (where python >nul 2>nul && set "PYTHON_EXE=python")
 
 if not defined PYTHON_EXE (
     echo Python not found. Please install Python 3.11+ or create .venv first.
@@ -44,43 +29,26 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
-if not defined ZROK_EXE (
-    where zrok >nul 2>nul
-    if not errorlevel 1 set "ZROK_EXE=zrok"
-)
-
-if not defined ZROK_EXE (
-    if exist "%CD%\zrok.exe" set "ZROK_EXE=%CD%\zrok.exe"
-)
-
-if not defined ZROK_EXE (
-    set "ZROK_EXE=%ZROK_BIN%"
-)
+REM ── Find zrok ─────────────────────────────────────────────────────
+set "ZROK_EXE="
+where zrok >nul 2>nul && set "ZROK_EXE=zrok"
+if not defined ZROK_EXE if exist "%CD%\zrok.exe" set "ZROK_EXE=%CD%\zrok.exe"
+if not defined ZROK_EXE if defined ZROK_BIN if exist "%ZROK_BIN%" set "ZROK_EXE=%ZROK_BIN%"
 
 if defined ZROK_EXE if /I not "%ZROK_EXE%"=="zrok" if exist "%ZROK_EXE%" (
     for %%I in ("%ZROK_EXE%") do set "PATH=%%~dpI;%PATH%"
 )
 
-if defined ZROK_EXE if /I not "%ZROK_EXE%"=="zrok" if not exist "%ZROK_EXE%" (
-    set "ZROK_EXE="
-)
-
 if not defined ZROK_EXE (
     echo zrok not found.
     echo.
-    echo Option 1:
-    echo   Install zrok and make sure `zrok` is available in PATH.
-    echo   https://docs.zrok.io/docs/guides/install/
-    echo.
-    echo Option 2:
-    echo   Set environment variable ZROK_BIN to the full path of zrok.exe
-    echo   Example:
-    echo   setx ZROK_BIN "C:\path\to\zrok.exe"
-    echo.
+    echo Install zrok from https://docs.zrok.io/docs/guides/install/
+    echo Ensure `zrok` is in PATH, or set ZROK_BIN to the full path of zrok.exe
     pause
     exit /b 1
 )
 
+REM ── Generate SSH key if needed ────────────────────────────────────
 if not exist "%KAGGLE_KEY%" (
     where ssh-keygen >nul 2>nul
     if not errorlevel 1 (
@@ -91,6 +59,7 @@ if not exist "%KAGGLE_KEY%" (
     )
 )
 
+REM ── Get token ─────────────────────────────────────────────────────
 set "TOKEN=%ZROK_TOKEN%"
 if not defined TOKEN if exist "%TOKEN_CACHE_FILE%" set /p TOKEN=<"%TOKEN_CACHE_FILE%"
 if not defined TOKEN set /p TOKEN=Enter your zrok token:
@@ -101,9 +70,7 @@ if not defined TOKEN (
 )
 
 if not exist "%TOKEN_CACHE_DIR%" mkdir "%TOKEN_CACHE_DIR%" >nul 2>nul
-> "%TOKEN_CACHE_FILE%" (
-    echo %TOKEN%
-)
+> "%TOKEN_CACHE_FILE%" (echo %TOKEN%)
 
 if defined NEW_KAGGLE_KEY if exist "%KAGGLE_PUBKEY%" (
     echo.
@@ -112,6 +79,7 @@ if defined NEW_KAGGLE_KEY if exist "%KAGGLE_PUBKEY%" (
     echo.
 )
 
+REM ── Launch client ─────────────────────────────────────────────────
 "%PYTHON_EXE%" zrok_client.py --token "%TOKEN%" --name "%NAME%" --server_name "%SERVER_NAME%" --workspace "%WORKSPACE%"
 set "EXIT_CODE=%ERRORLEVEL%"
 

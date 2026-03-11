@@ -1,23 +1,17 @@
 import urllib.request
 import os
-import sys
-import tarfile
 import json
 import subprocess
 import platform
+import tarfile
 import shutil
 
+
 class Zrok:
-    def __init__(self, token: str, name: str = None):
-        """Initialize Zrok instance with API token and optional environment name.
-        
-        Args:
-            token (str): Zrok API token for authentication
-            name (str, optional): Name/description for the zrok environment. Defaults to None.
-        """
-        if token.startswith('<') and token.endswith('>'):
-            raise ValueError("Please provide an actual your zrok token")
-        
+    def __init__(self, token, name=None):
+        if token.startswith("<") and token.endswith(">"):
+            raise ValueError("Please provide an actual zrok token")
+
         self.token = token
         self.name = name
         self.base_url = "https://api-v1.zrok.io/api/v1"
@@ -25,8 +19,8 @@ class Zrok:
 
     @staticmethod
     def resolve_executable():
-        for command in ("zrok", "zrok.exe"):
-            resolved = shutil.which(command)
+        for cmd in ("zrok", "zrok.exe"):
+            resolved = shutil.which(cmd)
             if resolved:
                 return resolved
 
@@ -43,196 +37,112 @@ class Zrok:
         return "zrok"
 
     def get_env(self):
-        """Get overview of all zrok environments using HTTP API.
-
-        This method uses HTTP API to retrieve environments even when zrok enable command fails.
-        
-        Returns:
-            dict: Overview data containing environments information
-            None: If the API call fails or no environments exist
-        """
+        """Get all zrok environments. Tries CLI first, falls back to HTTP API."""
         try:
             result = subprocess.run(
-                [self.cli, "overview"],
-                capture_output=True,
-                text=True,
-                check=True,
+                [self.cli, "overview"], capture_output=True, text=True, check=True,
             )
-            data = json.loads(result.stdout)
-            return data["environments"]
+            return json.loads(result.stdout)["environments"]
         except Exception:
             req = urllib.request.Request(
                 url=f"{self.base_url}/overview",
                 headers={"x-token": self.token},
             )
+            with urllib.request.urlopen(req) as resp:
+                if resp.getcode() != 200:
+                    raise Exception("zrok API overview error")
+                return json.loads(resp.read().decode("utf-8"))["environments"]
 
-            with urllib.request.urlopen(req) as response:
-                status = response.getcode()
-                data = response.read().decode('utf-8')
-                data = json.loads(data)
-
-            if status != 200:
-                print(f"Error: {status}")
-                raise Exception("zrok API overview error")
-            
-            return data['environments']
-
-    def find_env(self, name: str):
-        """Find a specific environment by its name.
-        
-        Args:
-            name (str): Name/description of the environment to find (case-insensitive)
-        
-        Returns:
-            dict: Environment information if found
-            None: If no environment matches the given name
-        """
+    def find_env(self, name):
+        """Find environment by name. Prefers environments with active shares."""
         overview = self.get_env()
-        if overview is None:
+        if not overview:
             return None
 
-        matches = []
-        for item in overview:
-            env = item["environment"]
-            if env["description"].lower() == name.lower():
-                matches.append(item)
-
+        matches = [item for item in overview
+                   if item["environment"]["description"].lower() == name.lower()]
         if not matches:
             return None
 
-        shareful_matches = [item for item in matches if item.get("shares")]
-        if shareful_matches:
-            return shareful_matches[-1]
-            
-        return matches[-1]
+        # Prefer matches that have active shares
+        with_shares = [m for m in matches if m.get("shares")]
+        return (with_shares or matches)[-1]
 
-    def delete_environment(self, zId: str):
-        """Delete a zrok environment by its ID.
-        
-        Args:
-            zid (str): The environment ID to delete
-        
-        Returns:
-            bool: True if the environment was successfully deleted, False otherwise
-        """
-        headers = {
-            "x-token": self.token,
-            "Accept": "*/*",
-            "Content-Type": "application/zrok.v1+json"
-        }
-        payload = {
-            "identity": zId
-        }
-        
-        data_bytes = json.dumps(payload).encode('utf-8')
-        
-        req = urllib.request.Request(f"{self.base_url}/disable", headers=headers, data=data_bytes, method="POST")
-        with urllib.request.urlopen(req) as response:
-            status = response.getcode()
+    def delete_environment(self, zId):
+        """Delete a zrok environment by its zId via HTTP API."""
+        payload = json.dumps({"identity": zId}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/disable",
+            headers={
+                "x-token": self.token,
+                "Accept": "*/*",
+                "Content-Type": "application/zrok.v1+json",
+            },
+            data=payload,
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            if resp.getcode() != 200:
+                raise Exception("Failed to delete environment")
 
-        if status != 200:
-            raise Exception("Failed to delete environment")
-
-        return True
-
-    def enable(self, name: str = None):
-        """Enable zrok with the specified environment name.
-        
-        This method runs the 'zrok enable' command with the provided token and
-        environment name. It will create a new environment if one doesn't exist.
-        
-        Args:
-            name (str, optional): Name/description for the zrok environment.
-                                 If not provided, uses the name from initialization.
-            
-        Raises:
-            RuntimeError: If enable command fails
-        """
-        env_name = name if name is not None else self.name
-        if env_name is None:
-            raise ValueError("Environment name must be provided either during initialization or when calling enable()")
-        
+    def enable(self, name=None):
+        """Enable zrok with environment name."""
+        env_name = name or self.name
+        if not env_name:
+            raise ValueError("Environment name required")
         subprocess.run([self.cli, "enable", self.token, "-d", env_name], check=True)
 
-    def disable(self, name: str = None):
-        """Disable zrok.
-        
-        This function executes the zrok disable command to delete the environment stored in the local file ~/.zrok/environment.json,
-        and additionally removes any environments that could not be deleted through HTTP communication.
-        
-        Args:
-            name (str, optional): Name/description for the zrok environment.
-                                If not provided, uses the name from initialization.
-        """
-        env_name = name if name is not None else self.name
+    def disable(self, name=None):
+        """Disable zrok locally and clean up remote environment."""
+        env_name = name or self.name
 
-        # Delete the ~/.zrok/environment.json file
         try:
             subprocess.run([self.cli, "disable"], check=True)
         except Exception as e:
-            print(e)
-            print("zrok already disable")
+            print(f"zrok disable: {e}")
 
-        # Delete environment via HTTP communication even if zrok is not enabled
         try:
             env = self.find_env(env_name)
-            if env is not None:
-                self.delete_environment(env['environment']['zId'])
+            if env:
+                self.delete_environment(env["environment"]["zId"])
         except Exception as e:
-            print(e)
-            print("failed to delete remote zrok environment; continuing")
+            print(f"Failed to delete remote env: {e}")
 
     @staticmethod
     def install():
-        """Install the latest version of zrok.
-        
-        This method:
-        1. Downloads the latest zrok release from GitHub
-        2. Extracts the binary to /usr/local/bin/
-        3. Verifies the installation
-        """
-        # Check if running on Windows
-        if platform.system() != 'Linux':
+        """Install latest zrok on Linux. On other platforms, check if it exists."""
+        if platform.system() != "Linux":
             if Zrok.is_installed():
                 return
-            raise Exception("zrok was not found on this machine. Install it from https://docs.zrok.io/docs/guides/install/ and ensure `zrok` is in PATH, or set ZROK_BIN to the full zrok executable path.")
+            raise Exception(
+                "zrok not found. Install from https://docs.zrok.io/docs/guides/install/ "
+                "and ensure it's in PATH, or set ZROK_BIN."
+            )
 
-        print("Downloading latest zrok release")
-        # Get latest release info
-        response = urllib.request.urlopen("https://api.github.com/repos/openziti/zrok/releases/latest")
-        data = json.loads(response.read())
-        
-        # Find linux_amd64 tar.gz download URL
+        print("Downloading latest zrok release...")
+        resp = urllib.request.urlopen("https://api.github.com/repos/openziti/zrok/releases/latest")
+        data = json.loads(resp.read())
+
         download_url = None
         for asset in data["assets"]:
             if "linux_amd64.tar.gz" in asset["browser_download_url"]:
                 download_url = asset["browser_download_url"]
                 break
-        
+
         if not download_url:
-            raise FileNotFoundError("Could not find zrok download URL for linux_amd64")
-        
-        # Download zrok
+            raise FileNotFoundError("Could not find zrok linux_amd64 download URL")
+
         urllib.request.urlretrieve(download_url, "zrok.tar.gz")
-        
-        print("Extracting Zrok")
         with tarfile.open("zrok.tar.gz", "r:gz") as tar:
             tar.extractall("/usr/local/bin/")
         os.remove("zrok.tar.gz")
 
-        # Check if zrok is installed correctly
         if not Zrok.is_installed():
             raise RuntimeError("Failed to verify zrok installation")
-        
-        print("Successfully installed zrok")
+        print("zrok installed successfully")
 
     @staticmethod
     def is_installed():
-        """Check if zrok is installed and accessible.
-        
-        Returns:
-            bool: True if zrok is installed and can be executed, False otherwise
-        """
         try:
             subprocess.run([Zrok.resolve_executable(), "version"], check=True)
             return True
@@ -240,24 +150,13 @@ class Zrok:
             return False
 
     @staticmethod
-    def is_enabled() -> bool:
-        """Check if zrok is enabled.
-        
-        Returns:
-            bool: True if zrok is enabled (Account Token and Ziti Identity are set), False otherwise
-        """
+    def is_enabled():
         try:
             result = subprocess.run(
                 [Zrok.resolve_executable(), "status"],
-                capture_output=True,
-                text=True,
-                check=True
+                capture_output=True, text=True, check=True,
             )
-            # Check if both Account Token and Ziti Identity are set
-            return "Account Token  <<SET>>" in result.stdout and "Ziti Identity  <<SET>>" in result.stdout
-        except subprocess.CalledProcessError:
+            return ("Account Token  <<SET>>" in result.stdout
+                    and "Ziti Identity  <<SET>>" in result.stdout)
+        except (subprocess.CalledProcessError, FileNotFoundError):
             return False
-        except FileNotFoundError:
-            return False
-
-  

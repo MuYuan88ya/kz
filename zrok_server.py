@@ -4,110 +4,27 @@ import sys
 import time
 import json
 import os
-from pathlib import Path
-from utils import Zrok
+import socket
 import string
 import random
-import stat
-import socket
+from pathlib import Path
+from utils import Zrok
 
-DEFAULT_STATE_DIR = "/kaggle/working/.kaggle_remote_zrok"
-DEFAULT_AUTHORIZED_KEYS_PATH = "/kaggle/working/.ssh/authorized_keys"
-DEFAULT_ENV_VARS_PATH = "/kaggle/working/kaggle_env_vars.txt"
-DEFAULT_DEVTOOLS_LOG_PATH = "/kaggle/working/.kaggle_remote_zrok/devtools-launch.log"
-
-
-def generate_random_password(length=16):
-    characters = (string.ascii_letters + string.digits + "!@#$%^*()-_=+{}[]<>.,?")
-    return ''.join(random.choices(characters, k=length))
+# ── Paths ───────────────────────────────────────────────────────────
+STATE_DIR = Path("/kaggle/working/.kaggle_remote_zrok")
+CONFIG_FILE = STATE_DIR / "server_config.json"
+SAVED_KEYS_FILE = STATE_DIR / "authorized_keys"
+LIVE_KEYS_FILE = Path("/kaggle/working/.ssh/authorized_keys")
+ENV_VARS_FILE = Path("/kaggle/working/kaggle_env_vars.txt")
+DEVTOOLS_LOG = STATE_DIR / "devtools-launch.log"
 
 
-def wait_for_share_token(zrok: Zrok, port: int, timeout: int = 20):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        env = zrok.find_env(zrok.name)
-        if env:
-            for share in env.get("shares", []):
-                if (share.get("backendMode") == "tcpTunnel" and
-                    share.get("backendProxyEndpoint") == f"localhost:{port}"):
-                    return share.get("shareToken")
-        time.sleep(1)
-    return None
+def generate_password(length=16):
+    chars = string.ascii_letters + string.digits + "!@#$%^*()-_=+{}[]<>.,?"
+    return "".join(random.choices(chars, k=length))
 
 
-def get_state_paths(state_dir: str):
-    state_root = Path(state_dir)
-    return {
-        "root": state_root,
-        "config": state_root / "server_config.json",
-        "authorized_keys": state_root / "authorized_keys",
-    }
-
-
-def load_saved_config(state_dir: str):
-    paths = get_state_paths(state_dir)
-    if not paths["config"].exists():
-        raise FileNotFoundError(f"Saved config not found: {paths['config']}")
-    with open(paths["config"], "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_config(config: dict, state_dir: str):
-    paths = get_state_paths(state_dir)
-    paths["root"].mkdir(parents=True, exist_ok=True)
-    with open(paths["config"], "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
-    return paths
-
-
-def write_authorized_key(public_key: str, state_dir: str):
-    paths = get_state_paths(state_dir)
-    paths["root"].mkdir(parents=True, exist_ok=True)
-    with open(paths["authorized_keys"], "w", encoding="utf-8", newline="\n") as f:
-        f.write(public_key.strip() + "\n")
-    return str(paths["authorized_keys"])
-
-
-def copy_persisted_authorized_keys(state_dir: str, live_path: str):
-    paths = get_state_paths(state_dir)
-    if not paths["authorized_keys"].exists():
-        return False
-
-    live_authorized_keys = Path(live_path)
-    live_authorized_keys.parent.mkdir(parents=True, exist_ok=True)
-    with open(paths["authorized_keys"], "r", encoding="utf-8") as src:
-        content = src.read()
-    with open(live_authorized_keys, "w", encoding="utf-8", newline="\n") as dst:
-        dst.write(content)
-    return True
-
-
-def ensure_executable(path: Path):
-    if not path.exists():
-        return
-
-    current_mode = path.stat().st_mode
-    executable_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    path.chmod(current_mode | executable_bits)
-
-
-def prepare_kaggle_runtime_files():
-    repo_root = Path(__file__).resolve().parent
-    ensure_executable(repo_root / "setup_ssh.sh")
-    ensure_executable(repo_root / "setup_devtools.sh")
-    ensure_executable(Path(__file__).resolve())
-
-    env_dump_path = Path(DEFAULT_ENV_VARS_PATH)
-    env_dump_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        f"printenv > {env_dump_path}",
-        shell=True,
-        executable="/bin/bash",
-        check=True,
-    )
-
-
-def wait_for_local_port(host: str, port: int, timeout: int = 10):
+def wait_for_port(host, port, timeout=10):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -118,159 +35,183 @@ def wait_for_local_port(host: str, port: int, timeout: int = 10):
     return False
 
 
-def run_ssh_setup(runtime):
-    if runtime["authorized_keys_url"]:
-        result = subprocess.run(["bash", "setup_ssh.sh", runtime["authorized_keys_url"]], check=False)
-    else:
-        result = subprocess.run(["bash", "setup_ssh.sh"], check=False)
+def wait_for_share_token(zrok, port, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        env = zrok.find_env(zrok.name)
+        if env:
+            for share in env.get("shares", []):
+                if (share.get("backendMode") == "tcpTunnel"
+                        and share.get("backendProxyEndpoint") == f"localhost:{port}"):
+                    return share.get("shareToken")
+        time.sleep(1)
+    return None
 
+
+def load_config():
+    if not CONFIG_FILE.exists():
+        raise FileNotFoundError(f"Saved config not found: {CONFIG_FILE}")
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_config(config):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+
+def save_authorized_key(public_key):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SAVED_KEYS_FILE, "w", encoding="utf-8", newline="\n") as f:
+        f.write(public_key.strip() + "\n")
+
+
+def copy_saved_keys_to_live():
+    if not SAVED_KEYS_FILE.exists():
+        return
+    LIVE_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    content = SAVED_KEYS_FILE.read_text(encoding="utf-8")
+    with open(LIVE_KEYS_FILE, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+
+
+def dump_env_vars():
+    """Capture current Kaggle env vars for later SSH sessions."""
+    ENV_VARS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(f"printenv > {ENV_VARS_FILE}", shell=True, executable="/bin/bash", check=True)
+
+
+def run_ssh_setup(authorized_keys_url):
+    """Run setup_ssh.sh. Tolerates non-zero exit if SSH is actually listening."""
+    script = Path(__file__).resolve().parent / "setup_ssh.sh"
+    cmd = ["bash", str(script)]
+    if authorized_keys_url:
+        cmd.append(authorized_keys_url)
+
+    result = subprocess.run(cmd, check=False)
     if result.returncode == 0:
         return
 
-    if wait_for_local_port("127.0.0.1", runtime["port"], timeout=10):
-        print(
-            f"setup_ssh.sh exited with status {result.returncode}, "
-            f"but localhost:{runtime['port']} is accepting connections; continuing"
-        )
+    if wait_for_port("127.0.0.1", 22, timeout=10):
+        print(f"setup_ssh.sh exited {result.returncode}, but SSH is listening; continuing")
         return
 
     raise subprocess.CalledProcessError(result.returncode, result.args)
 
 
-def launch_devtools_setup():
-    script_path = Path(__file__).resolve().parent / "setup_devtools.sh"
-    if not script_path.exists():
-        print("setup_devtools.sh not found; skipping devtools bootstrap")
+def launch_devtools():
+    script = Path(__file__).resolve().parent / "setup_devtools.sh"
+    if not script.exists():
+        print("setup_devtools.sh not found; skipping")
         return
 
-    log_path = Path(DEFAULT_DEVTOOLS_LOG_PATH)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
+    DEVTOOLS_LOG.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["DEVTOOLS_WATCH_MODE"] = "foreground"
 
-    with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
-        process = subprocess.Popen(
-            ["bash", str(script_path)],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=env,
+    with open(DEVTOOLS_LOG, "a", encoding="utf-8", newline="\n") as log:
+        proc = subprocess.Popen(
+            ["bash", str(script)],
+            stdout=log, stderr=subprocess.STDOUT,
+            start_new_session=True, env=env,
         )
-
-    print(f"Started background devtools bootstrap (PID {process.pid})")
-    print(f"Devtools bootstrap log: {log_path}")
+    print(f"Devtools bootstrap started (PID {proc.pid}), log: {DEVTOOLS_LOG}")
 
 
-def build_runtime_config(args):
-    if args.start:
-        config = load_saved_config(args.state_dir)
-    else:
-        config = {}
-
-    runtime = {
-        "token": args.token or config.get("token"),
-        "name": args.name or config.get("name", "kaggle_server"),
-        "authorized_keys_url": args.authorized_keys_url or config.get("authorized_keys_url"),
-        "password": args.password if args.password is not None else config.get("password"),
-        "port": args.port if args.port is not None else config.get("port", 22),
-        "state_dir": args.state_dir,
-    }
-
-    if args.authorized_key:
-        runtime["authorized_key_saved"] = write_authorized_key(args.authorized_key, args.state_dir)
-    elif get_state_paths(args.state_dir)["authorized_keys"].exists():
-        runtime["authorized_key_saved"] = str(get_state_paths(args.state_dir)["authorized_keys"])
-    else:
-        runtime["authorized_key_saved"] = None
-
-    if not runtime["token"]:
-        raise ValueError("A zrok token is required. Use --init with --token once, then later use --start.")
-
-    if not runtime["authorized_key_saved"] and not runtime["authorized_keys_url"] and runtime["password"] is None:
-        runtime["password"] = generate_random_password()
-
-    return runtime
-
-
-def persist_runtime_config(runtime: dict):
-    config = {
-        "token": runtime["token"],
-        "name": runtime["name"],
-        "authorized_keys_url": runtime["authorized_keys_url"],
-        "password": runtime["password"],
-        "port": runtime["port"],
-    }
-    save_config(config, runtime["state_dir"])
-
+# ── Main ────────────────────────────────────────────────────────────
 
 def main(args):
-    runtime = build_runtime_config(args)
-    if args.init:
-        persist_runtime_config(runtime)
-        print(f"Saved server config to {get_state_paths(args.state_dir)['config']}")
-        if runtime["authorized_key_saved"]:
-            print(f"Saved authorized_keys to {runtime['authorized_key_saved']}")
-        if runtime["password"] is not None:
-            print(f"Saved password for future starts: {runtime['password']}")
+    # 1. Build config from saved state + CLI overrides
+    saved = load_config() if args.start else {}
 
-    zrok = Zrok(runtime["token"], runtime["name"])
-    
+    token = args.token or saved.get("token")
+    name = args.name or saved.get("name", "kaggle_server")
+    auth_url = args.authorized_keys_url or saved.get("authorized_keys_url")
+    password = args.password if args.password is not None else saved.get("password")
+    port = args.port if args.port is not None else saved.get("port", 22)
+
+    if not token:
+        raise ValueError("A zrok token is required. Use --init with --token once, then --start.")
+
+    # Save authorized key if provided
+    if args.authorized_key:
+        save_authorized_key(args.authorized_key)
+
+    # Generate password if no auth method configured
+    if not SAVED_KEYS_FILE.exists() and not auth_url and password is None:
+        password = generate_password()
+
+    # 2. Persist config on --init
+    if args.init:
+        save_config({"token": token, "name": name, "authorized_keys_url": auth_url,
+                      "password": password, "port": port})
+        print(f"Config saved to {CONFIG_FILE}")
+        if args.authorized_key:
+            print(f"Authorized key saved to {SAVED_KEYS_FILE}")
+        if password is not None:
+            print(f"Password: {password}")
+
+    # 3. Install + enable zrok
+    zrok = Zrok(token, name)
     if not Zrok.is_installed():
         Zrok.install()
-
     zrok.disable()
     zrok.enable()
 
-    copy_persisted_authorized_keys(runtime["state_dir"], DEFAULT_AUTHORIZED_KEYS_PATH)
-    prepare_kaggle_runtime_files()
-    
-    # Setup SSH server
+    # 4. Prepare runtime files
+    copy_saved_keys_to_live()
+    dump_env_vars()
+
+    # 5. Setup SSH (calls setup_ssh.sh — fully self-contained)
     print("Setting up SSH server...")
-    run_ssh_setup(runtime)
+    run_ssh_setup(auth_url)
 
-    if runtime["password"] is not None:
-        print(f"Setting password for root user: {runtime['password']}")
-        subprocess.run(f"echo 'root:{runtime['password']}' | sudo chpasswd", shell=True, check=True)
+    if password is not None:
+        print(f"Setting root password: {password}")
+        subprocess.run(f"echo 'root:{password}' | sudo chpasswd", shell=True, check=True)
     else:
-        print("Password login not configured. Using SSH public key authentication only.")
+        print("Using SSH public key authentication only.")
 
+    # 6. Devtools
     if not args.no_devtools:
-        launch_devtools_setup()
+        launch_devtools()
     else:
-        print("Skipping devtools bootstrap by request")
+        print("Skipping devtools bootstrap")
 
-    print("Starting private zrok tcp tunnel for localhost:22...")
-    share_process = subprocess.Popen(
-        [zrok.cli, "share", "private", f"localhost:{runtime['port']}", "--backend-mode", "tcpTunnel", "--headless"]
+    # 7. Start private zrok share
+    print(f"Starting private zrok tcp tunnel for localhost:{port}...")
+    share_proc = subprocess.Popen(
+        [zrok.cli, "share", "private", f"localhost:{port}",
+         "--backend-mode", "tcpTunnel", "--headless"]
     )
 
-    share_token = wait_for_share_token(zrok, runtime["port"])
+    share_token = wait_for_share_token(zrok, port)
     if share_token:
         print(f"Share token: {share_token}")
     else:
-        print("Share token not found yet. Check zrok service status and environment overview.")
+        print("Share token not found yet. Check zrok status.")
 
-    print("Private share is running. Keep this process alive while the client is connected.")
-    share_process.wait()
+    print("Private share running. Keep this process alive.")
+    share_proc.wait()
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Kaggle SSH connection setup')
-    parser.add_argument('--token', type=str, help='zrok API token')
-    parser.add_argument('--name', type=str, help='Environment name to create (default: kaggle_server)')
-    parser.add_argument('--authorized_keys_url', type=str, help='URL to authorized_keys file')
-    parser.add_argument('--authorized_key', type=str, help='Public key content to persist for future starts')
-    parser.add_argument('--password', type=str, help='Password for root user, if not provided, a random password will be generated')
-    parser.add_argument('--port', type=int, help='SSH port to share (default: 22)')
-    parser.add_argument('--state-dir', type=str, default=DEFAULT_STATE_DIR, help=f'Persistent config directory (default: {DEFAULT_STATE_DIR})')
-    parser.add_argument('--init', action='store_true', help='Save token and auth config to persistent storage, then start')
-    parser.add_argument('--start', action='store_true', help='Start using previously saved config only')
-    parser.add_argument('--no-devtools', action='store_true', help='Do not launch setup_devtools.sh in the background')
+    parser = argparse.ArgumentParser(description="Kaggle SSH server via zrok")
+    parser.add_argument("--token", type=str, help="zrok API token")
+    parser.add_argument("--name", type=str, help="Environment name (default: kaggle_server)")
+    parser.add_argument("--authorized_keys_url", type=str, help="URL to authorized_keys file")
+    parser.add_argument("--authorized_key", type=str, help="Public key to persist")
+    parser.add_argument("--password", type=str, help="Root password (random if omitted and no key auth)")
+    parser.add_argument("--port", type=int, help="SSH port (default: 22)")
+    parser.add_argument("--init", action="store_true", help="Save config then start")
+    parser.add_argument("--start", action="store_true", help="Start from saved config")
+    parser.add_argument("--no-devtools", action="store_true", help="Skip setup_devtools.sh")
     args = parser.parse_args()
 
     if not args.token and not args.start:
         args.token = input("Enter your zrok API token: ")
-    
+
     try:
         main(args)
     except Exception as e:
