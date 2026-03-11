@@ -8,6 +8,9 @@ LOG_FILE="$STATE_DIR/devtools.log"
 WATCH_SCRIPT="$STATE_DIR/install_vscode_extensions.sh"
 WATCH_PID_FILE="$STATE_DIR/install_vscode_extensions.pid"
 SHELL_RC="$HOME/.bashrc"
+PROFILE_FILE="$HOME/.profile"
+PROFILE_SNIPPET="$STATE_DIR/devtools-path.sh"
+CODEX_JS="$NPM_PREFIX/lib/node_modules/@openai/codex/bin/codex.js"
 
 EXTENSIONS=(
     "ms-python.python"
@@ -41,14 +44,28 @@ ensure_node_and_npm() {
 ensure_persistent_npm_prefix() {
     mkdir -p "$NPM_PREFIX"
     export PATH="$NPM_PREFIX/bin:$PATH"
+    node_bin_dir="$(dirname "$(command -v node)")"
+
+    cat >"$PROFILE_SNIPPET" <<EOF
+export PATH="$node_bin_dir:$NPM_PREFIX/bin:\$PATH"
+EOF
 
     if ! grep -Fq '# kaggle-remote-zrok devtools path' "$SHELL_RC" 2>/dev/null; then
         cat >>"$SHELL_RC" <<EOF
 
 # kaggle-remote-zrok devtools path
-export PATH="$NPM_PREFIX/bin:\$PATH"
+[ -f "$PROFILE_SNIPPET" ] && source "$PROFILE_SNIPPET"
 EOF
     fi
+
+    if ! grep -Fq "$PROFILE_SNIPPET" "$PROFILE_FILE" 2>/dev/null; then
+        cat >>"$PROFILE_FILE" <<EOF
+
+[ -f "$PROFILE_SNIPPET" ] && . "$PROFILE_SNIPPET"
+EOF
+    fi
+
+    export PATH="$node_bin_dir:$NPM_PREFIX/bin:$PATH"
 }
 
 ensure_codex_cli() {
@@ -61,7 +78,28 @@ ensure_codex_cli() {
 
     log "Installing Codex CLI..."
     npm install -g @openai/codex --prefix "$NPM_PREFIX"
-    log "Codex CLI installed: $("$NPM_PREFIX/bin/codex" --version)"
+    install_codex_wrapper
+    log "Codex CLI installed: $(codex --version)"
+}
+
+install_codex_wrapper() {
+    node_path="$(command -v node)"
+    if [ ! -x "$node_path" ]; then
+        log "node executable not found after install"
+        exit 1
+    fi
+
+    if [ ! -f "$CODEX_JS" ]; then
+        log "Codex entrypoint not found: $CODEX_JS"
+        exit 1
+    fi
+
+    cat >"$NPM_PREFIX/bin/codex" <<EOF
+#!/bin/bash
+export PATH="$(dirname "$node_path"):$NPM_PREFIX/bin:\$PATH"
+exec "$node_path" "$CODEX_JS" "\$@"
+EOF
+    chmod +x "$NPM_PREFIX/bin/codex"
 }
 
 write_watcher_script() {
@@ -141,7 +179,7 @@ start_watcher() {
 show_summary() {
     log "Python: $(python3 --version 2>/dev/null || echo unavailable)"
     log "Jupyter: $(jupyter --version 2>/dev/null | head -n 1 || echo unavailable)"
-    log "Codex CLI: $("$NPM_PREFIX/bin/codex" --version 2>/dev/null || echo unavailable)"
+    log "Codex CLI: $(codex --version 2>/dev/null || echo unavailable)"
     log "Devtools log: $LOG_FILE"
 }
 
@@ -150,6 +188,7 @@ main() {
     ensure_node_and_npm
     ensure_persistent_npm_prefix
     ensure_codex_cli
+    install_codex_wrapper
     write_watcher_script
     start_watcher
     show_summary
