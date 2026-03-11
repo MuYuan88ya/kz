@@ -1,188 +1,171 @@
 # Kaggle Remote zrok
 
-Use Kaggle as a temporary remote Linux machine and connect from Windows through `zrok` and SSH.
+[中文文档](README_CN.md)
 
-`zrok.exe` is intentionally not committed. Install `zrok` first:
-
-- https://docs.zrok.io/docs/guides/install/
+Connect to a Kaggle notebook over SSH from Windows using [zrok](https://zrok.io) as a private tunnel.
 
 ## Prerequisites
 
-- A Kaggle notebook with internet enabled
-- Your zrok account token
-- Windows with Python 3.11+
-- VS Code
-- VS Code Remote - SSH extension
-- `zrok` available in `PATH`, or `zrok.exe` placed in the project directory, or `ZROK_BIN` set
+| Requirement | Notes |
+|---|---|
+| Kaggle notebook | Internet must be enabled |
+| zrok account | Get a token at [zrok.io](https://zrok.io) |
+| Windows + Python 3.11+ | — |
+| VS Code + Remote SSH extension | — |
+| `zrok` binary | In `PATH`, project dir, or via `ZROK_BIN` env var |
 
-## Init Flow
+---
 
-This only needs to be done once for the same Kaggle notebook storage.
+## Quick Start (First Time)
 
-Kaggle persistent state is stored in:
-
-```text
-/kaggle/working/.kaggle_remote_zrok
-```
-
-### Step 1: Prepare on Windows
-
-Run:
+### 1. Prepare on Windows
 
 ```bat
 prepare_client.bat
 ```
 
-This does four things:
+This will:
+- Cache your zrok token locally
+- Generate `~/.ssh/kaggle_rsa` keypair (if not exists)
+- Print the Kaggle init command to paste
 
-- caches your zrok token in `%USERPROFILE%\.kaggle_remote_zrok\zrok_token.txt`
-- creates `~/.ssh/kaggle_rsa` if it does not already exist
-- prints your SSH public key
-- prints the exact Kaggle init command you should paste
+### 2. Initialize on Kaggle
 
-This step does not connect to Kaggle.
-
-### Step 2: Initialize in Kaggle
-
-Paste the printed command into a Kaggle cell and run it.
-
-Typical command:
+Paste into a Kaggle notebook cell:
 
 ```bash
 !git clone https://github.com/MuYuan88ya/kz.git /kaggle/working/kz
 %cd /kaggle/working/kz
-!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --authorized_key "PASTE_YOUR_PUBLIC_KEY_HERE"
+!python3 zrok_server.py --init --token "YOUR_TOKEN" --authorized_key "YOUR_PUBLIC_KEY"
 ```
 
-This init step:
+> **What happens:** saves config → installs SSH → starts devtools → opens private tunnel.
 
-- saves the zrok token and SSH public key
-- captures current Kaggle env vars for later SSH sessions
-- starts `sshd` via `setup_ssh.sh`
-- starts `setup_devtools.sh` in the background
-- starts the private zrok share
+### 3. Connect from Windows
 
-### Step 3: Keep Kaggle running
-
-Do not stop the Kaggle cell after the share starts.
-
-### Step 4: Devtools bootstrap starts automatically
-
-`zrok_server.py` launches `setup_devtools.sh` in the background automatically.
-
-That script:
-
-- installs `nodejs` and `npm` if needed
-- installs `@openai/codex`
-- adds the persistent npm bin directory to root's PATH
-- keeps a fallback watcher for remote VS Code extension installs
-
-Logs:
-
-```text
-/kaggle/working/.kaggle_remote_zrok/devtools-launch.log
-/kaggle/working/.kaggle_remote_zrok/devtools.log
+```bat
+start_client.bat
 ```
 
-Skip for one run:
+> **What happens:** finds tunnel → opens local port 9191 → writes SSH config → launches VS Code.
+
+### 4. Keep Kaggle running
+
+Do **not** stop the Kaggle cell — the tunnel dies when the cell stops.
+
+---
+
+## Daily Use (After Init)
+
+Only two steps:
+
+```bash
+# Kaggle cell
+%cd /kaggle/working/kz
+!python3 zrok_server.py --start
+```
+
+```bat
+REM Windows
+start_client.bat
+```
+
+---
+
+## Variants
+
+**Password login** (instead of SSH key):
+
+```bash
+!python3 zrok_server.py --init --token "YOUR_TOKEN" --password "your_password"
+```
+
+**Skip devtools bootstrap**:
 
 ```bash
 !python3 zrok_server.py --start --no-devtools
 ```
 
-### Step 5: Connect from Windows
-
-Run:
-
-```bat
-start_client.bat
-```
-
-It will:
-
-- find the `kaggle_server` share
-- open local access on `127.0.0.1:9191`
-- update `%USERPROFILE%\.ssh\config`
-- update local VS Code remote extension defaults
-- open VS Code Remote SSH
-
-### Password-based init
-
-If you want password login instead of key login:
+**Custom environment name**:
 
 ```bash
-!python3 zrok_server.py --init --token "YOUR_ZROK_TOKEN" --password "0"
+!python3 zrok_server.py --init --token "YOUR_TOKEN" --name "my_server"
 ```
 
-## Later Use Flow
-
-After init has succeeded once, each later session is only two steps.
-
-### Step 1: Start Kaggle side
+**Authorized keys from URL**:
 
 ```bash
-%cd /kaggle/working/kz
-!python3 zrok_server.py --start
+!python3 zrok_server.py --init --token "YOUR_TOKEN" --authorized_keys_url "https://example.com/keys"
 ```
 
-### Step 2: Start Windows side
+---
 
-```bat
-start_client.bat
+## How It Works
+
+```
+┌─────────────────────┐          zrok tunnel          ┌─────────────────────┐
+│     Windows PC      │◄────────────────────────────►│   Kaggle Notebook   │
+│                     │    private TCP on port 9191    │                     │
+│  start_client.bat   │                               │  zrok_server.py     │
+│  └─ zrok_client.py  │                               │  └─ setup_ssh.sh    │
+│     └─ VS Code SSH  │                               │  └─ setup_devtools  │
+└─────────────────────┘                               └─────────────────────┘
 ```
 
-## Windows Scripts
-
-### `prepare_client.bat`
-
-First-time setup: caches token, creates SSH key, prints Kaggle init command.
-
-### `start_client.bat`
-
-Daily use: connects to running Kaggle server.
-
-Token lookup: `ZROK_TOKEN` → `%USERPROFILE%\.kaggle_remote_zrok\zrok_token.txt` → prompt.
-
-`zrok` lookup: `PATH` → project directory → `ZROK_BIN`.
+---
 
 ## Generated SSH Config
 
-```sshconfig
+The client writes this to `~/.ssh/config`:
+
+```
 Host kaggle_client
     HostName 127.0.0.1
     User root
     Port 9191
+    IdentityFile ~/.ssh/kaggle_rsa    # if key exists
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 ```
 
-If `~/.ssh/kaggle_rsa` exists, key-based login is used. Otherwise password authentication.
+---
+
+## Persistent State
+
+| Location | Purpose |
+|---|---|
+| `/kaggle/working/.kaggle_remote_zrok/` | Server config, saved keys |
+| `/kaggle/working/kaggle_env_vars.txt` | Captured env vars for SSH sessions |
+| `%USERPROFILE%\.kaggle_remote_zrok\` | Cached zrok token (Windows) |
+
+---
+
+## Token & Binary Lookup
+
+**Token** (Windows): `ZROK_TOKEN` env → `%USERPROFILE%\.kaggle_remote_zrok\zrok_token.txt` → prompt.
+
+**zrok binary** (Windows): `PATH` → project dir `zrok.exe` → `ZROK_BIN` env.
+
+---
 
 ## Troubleshooting
 
-### `kaggle_server environment not found`
+| Error | Cause & Fix |
+|---|---|
+| `kaggle_server environment not found` | Kaggle cell isn't running, or server hasn't finished starting |
+| `enableUnauthorized` | Invalid token, or stale local zrok state (`zrok disable` to reset) |
+| `zrok not found` | Install zrok and ensure it's accessible (see Prerequisites) |
 
-- The Kaggle cell is not running
-- The server process did not finish creating the private share
-- You ran `--start` before ever running `--init`
-
-### `enableUnauthorized`
-
-- Make sure the token is a real zrok account token
-- Make sure another terminal is not holding conflicting local zrok state
-
-### `zrok` not found on Windows
-
-Install `zrok` and ensure one of: `zrok` in `PATH`, `zrok.exe` in project dir, or `ZROK_BIN` set.
+---
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `zrok_server.py` | Kaggle-side startup script |
-| `zrok_client.py` | Windows client script |
-| `utils.py` | Shared Zrok API wrapper |
-| `setup_ssh.sh` | Self-contained SSH server bootstrap (called by server) |
-| `setup_devtools.sh` | Optional Kaggle-side devtools bootstrap |
-| `prepare_client.bat` | First-time Windows setup helper |
-| `start_client.bat` | Daily Windows connect launcher |
+| File | Runs On | Description |
+|---|---|---|
+| `zrok_server.py` | Kaggle | Server entry point: config, SSH, tunnel |
+| `zrok_client.py` | Windows | Client entry point: find tunnel, connect |
+| `utils.py` | Both | Shared `Zrok` API wrapper |
+| `setup_ssh.sh` | Kaggle | Self-contained SSH server bootstrap |
+| `setup_devtools.sh` | Kaggle | Codex CLI + VS Code extensions installer |
+| `prepare_client.bat` | Windows | First-time setup helper |
+| `start_client.bat` | Windows | Daily connect launcher |
