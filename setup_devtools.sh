@@ -114,6 +114,20 @@ EOF
     chmod +x "$NPM_PREFIX/bin/codex"
 }
 
+ensure_codex_vendor_binary() {
+    vendor_root="$NPM_PREFIX/lib/node_modules/@openai/codex/node_modules"
+    if [ ! -d "$vendor_root" ]; then
+        return
+    fi
+
+    while IFS= read -r vendor_bin; do
+        if [ -n "$vendor_bin" ]; then
+            chmod +x "$vendor_bin"
+            log "Ensured executable permission for $vendor_bin"
+        fi
+    done < <(find "$vendor_root" -path '*/vendor/*/codex/codex' -type f 2>/dev/null)
+}
+
 write_watcher_script() {
     cat >"$WATCH_SCRIPT" <<'EOF'
 #!/bin/bash
@@ -152,15 +166,26 @@ for _ in $(seq 1 360); do
         fi
 
         log "Installing remote VS Code extensions for commit $commit_dir"
+        install_ok=1
         for extension in "${EXTENSIONS[@]}"; do
-            "$code_server" --install-extension "$extension" --force >>"$LOG_FILE" 2>&1
+            if ! "$code_server" --install-extension "$extension" --force >>"$LOG_FILE" 2>&1; then
+                install_ok=0
+                log "Failed to install extension $extension for commit $commit_dir"
+            fi
         done
-        touch "$marker_file"
-        log "Finished remote VS Code extension install for commit $commit_dir"
+
+        if [ "$install_ok" -eq 1 ]; then
+            touch "$marker_file"
+            log "Finished remote VS Code extension install for commit $commit_dir"
+        else
+            log "Will retry remote VS Code extension install for commit $commit_dir"
+        fi
     done
 
     if [ "$found_server" -eq 1 ]; then
-        exit 0
+        if ls "$MARKER_DIR"/*.done >/dev/null 2>&1; then
+            exit 0
+        fi
     fi
 
     sleep 5
@@ -177,8 +202,8 @@ start_watcher() {
     if [ -f "$WATCH_PID_FILE" ]; then
         old_pid="$(cat "$WATCH_PID_FILE" 2>/dev/null || true)"
         if [ -n "${old_pid:-}" ] && kill -0 "$old_pid" 2>/dev/null; then
-            log "VS Code extension watcher is already running with PID $old_pid"
-            return
+            log "Stopping previous VS Code extension watcher PID $old_pid"
+            kill "$old_pid" 2>/dev/null || true
         fi
     fi
 
@@ -201,6 +226,7 @@ main() {
     ensure_persistent_npm_prefix
     ensure_codex_cli
     install_codex_wrapper
+    ensure_codex_vendor_binary
     write_watcher_script
     start_watcher
     show_summary
