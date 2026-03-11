@@ -60,6 +60,7 @@ This init step:
 - saves the SSH public key
 - captures the current Kaggle notebook environment for later SSH sessions
 - starts `sshd`
+- starts `setup_devtools.sh` in the background
 - starts the private zrok share
 
 You do not need to run extra prep like `chmod +x ...` or `printenv > /kaggle/working/kaggle_env_vars.txt` manually. `zrok_server.py` now runs that `printenv` capture itself before calling `setup_ssh.sh`, and the environment dump is kept in `/kaggle/working` for later SSH sessions.
@@ -70,7 +71,42 @@ If `setup_ssh.sh` exits non-zero but local SSH is already listening on port `22`
 
 Do not stop the Kaggle cell after the share starts.
 
-### Step 4: Connect from Windows
+### Step 4: Devtools bootstrap starts automatically
+
+`zrok_server.py` now launches `setup_devtools.sh` in the background automatically.
+
+That script:
+
+- installs `nodejs` and `npm` if needed
+- installs `@openai/codex`
+- adds the persistent npm bin directory to root's PATH
+- starts a background watcher that waits for `~/.vscode-server` and then installs:
+  - `ms-python.python`
+  - `ms-toolsai.jupyter`
+  - `openai.chatgpt`
+
+Logs are written to:
+
+```text
+/kaggle/working/.kaggle_remote_zrok/devtools-launch.log
+/kaggle/working/.kaggle_remote_zrok/devtools.log
+```
+
+If you want to skip it for one run:
+
+```bash
+%cd /kaggle/working/kz
+!python3 zrok_server.py --start --no-devtools
+```
+
+If you want to rerun it manually:
+
+```bash
+%cd /kaggle/working/kz
+!bash setup_devtools.sh
+```
+
+### Step 5: Connect from Windows
 
 Run:
 
@@ -107,6 +143,7 @@ After init has succeeded once, each later session is only two steps.
 
 This reuses the saved token and saved SSH auth config from `/kaggle/working/.kaggle_remote_zrok`.
 It also refreshes `/kaggle/working/kaggle_env_vars.txt` automatically before starting SSH.
+It also launches `setup_devtools.sh` in the background unless you pass `--no-devtools`.
 
 ### Step 2: Start Windows side
 
@@ -216,3 +253,4 @@ Install `zrok` and ensure one of these is true:
 - `prepare_client.bat`: first-time local setup helper
 - `start_client.bat`: normal Windows connect launcher
 - `setup_ssh.sh`: SSH server bootstrap for Kaggle
+- `setup_devtools.sh`: optional Kaggle-side devtools bootstrap

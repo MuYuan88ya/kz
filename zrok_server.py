@@ -14,6 +14,7 @@ import socket
 DEFAULT_STATE_DIR = "/kaggle/working/.kaggle_remote_zrok"
 DEFAULT_AUTHORIZED_KEYS_PATH = "/kaggle/working/.ssh/authorized_keys"
 DEFAULT_ENV_VARS_PATH = "/kaggle/working/kaggle_env_vars.txt"
+DEFAULT_DEVTOOLS_LOG_PATH = "/kaggle/working/.kaggle_remote_zrok/devtools-launch.log"
 
 
 def generate_random_password(length=16):
@@ -93,6 +94,7 @@ def ensure_executable(path: Path):
 def prepare_kaggle_runtime_files():
     repo_root = Path(__file__).resolve().parent
     ensure_executable(repo_root / "setup_ssh.sh")
+    ensure_executable(repo_root / "setup_devtools.sh")
     ensure_executable(Path(__file__).resolve())
 
     env_dump_path = Path(DEFAULT_ENV_VARS_PATH)
@@ -133,6 +135,27 @@ def run_ssh_setup(runtime):
         return
 
     raise subprocess.CalledProcessError(result.returncode, result.args)
+
+
+def launch_devtools_setup():
+    script_path = Path(__file__).resolve().parent / "setup_devtools.sh"
+    if not script_path.exists():
+        print("setup_devtools.sh not found; skipping devtools bootstrap")
+        return
+
+    log_path = Path(DEFAULT_DEVTOOLS_LOG_PATH)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
+        process = subprocess.Popen(
+            ["bash", str(script_path)],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    print(f"Started background devtools bootstrap (PID {process.pid})")
+    print(f"Devtools bootstrap log: {log_path}")
 
 
 def build_runtime_config(args):
@@ -208,6 +231,11 @@ def main(args):
     else:
         print("Password login not configured. Using SSH public key authentication only.")
 
+    if not args.no_devtools:
+        launch_devtools_setup()
+    else:
+        print("Skipping devtools bootstrap by request")
+
     print("Starting private zrok tcp tunnel for localhost:22...")
     share_process = subprocess.Popen(
         [zrok.cli, "share", "private", f"localhost:{runtime['port']}", "--backend-mode", "tcpTunnel", "--headless"]
@@ -233,6 +261,7 @@ if __name__ == "__main__":
     parser.add_argument('--state-dir', type=str, default=DEFAULT_STATE_DIR, help=f'Persistent config directory (default: {DEFAULT_STATE_DIR})')
     parser.add_argument('--init', action='store_true', help='Save token and auth config to persistent storage, then start')
     parser.add_argument('--start', action='store_true', help='Start using previously saved config only')
+    parser.add_argument('--no-devtools', action='store_true', help='Do not launch setup_devtools.sh in the background')
     args = parser.parse_args()
 
     if not args.token and not args.start:
