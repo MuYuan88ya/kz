@@ -95,7 +95,6 @@ install_packages() {
 
 start_ssh_service() {
     service ssh start
-    service ssh enable
     service ssh restart
 }
 
