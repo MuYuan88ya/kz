@@ -3,6 +3,10 @@ setlocal
 
 cd /d "%~dp0"
 
+REM Preferred: set ZROK_TOKEN in your shell or user environment.
+REM Fallback: paste the token into the console when prompted.
+REM Do not save a real token in this file if you plan to commit it.
+
 set "NAME=kaggle_client"
 set "SERVER_NAME=kaggle_server"
 set "WORKSPACE=/kaggle/working"
@@ -29,7 +33,8 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
-set /p TOKEN=Enter your zrok token: 
+set "TOKEN=%ZROK_TOKEN%"
+if not defined TOKEN set /p TOKEN=Enter your zrok token:
 if not defined TOKEN (
     echo Token is required.
     pause

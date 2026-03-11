@@ -31,9 +31,20 @@ Optional:
 
 ## Server Side Usage
 
-Run this in Kaggle:
+### Copy-paste commands for Kaggle
+
+If you want the complete server-side flow as commands you can copy directly into Kaggle, use this:
 
 ```bash
+!git clone https://github.com/MuYuan88ya/kz.git /kaggle/working/kz
+%cd /kaggle/working/kz
+!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0"
+```
+
+If the repository is already present in `/kaggle/working/kz`, you only need:
+
+```bash
+%cd /kaggle/working/kz
 !python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0"
 ```
 
@@ -60,11 +71,48 @@ Optional arguments:
 
 If you want key-based authentication, upload your public key somewhere reachable and pass it with `--authorized_keys_url`.
 
+Example with `authorized_keys`:
+
+```bash
+%cd /kaggle/working/kz
+!python3 zrok_server.py --token "YOUR_ZROK_TOKEN" --password "0" --authorized_keys_url "https://example.com/authorized_keys"
+```
+
 ## Client Side Usage
 
 ### One-click launcher
 
 Double-click `start_client.bat`.
+
+You do not need to edit the file to store the token.
+
+When the batch window opens, it will show:
+
+```text
+Enter your zrok token:
+```
+
+Recommended token handling:
+
+- Best: set an environment variable named `ZROK_TOKEN`
+- Fallback: paste the token into the batch window when prompted
+- Do not hardcode the token into `start_client.bat`
+
+PowerShell example:
+
+```powershell
+$env:ZROK_TOKEN="YOUR_ZROK_TOKEN"
+.\start_client.bat
+```
+
+If you do not set `ZROK_TOKEN`, paste your token there and press Enter.
+
+Recommended flow:
+
+1. Double-click `start_client.bat`
+2. Paste your zrok token into the console window
+3. Press Enter
+4. Wait for the tunnel and VS Code Remote SSH to open
 
 It will:
 
@@ -98,6 +146,12 @@ python zrok_client.py --token "YOUR_ZROK_TOKEN" --workspace "/kaggle/working"
 3. On your local machine, run `start_client.bat` or `python zrok_client.py --token "YOUR_ZROK_TOKEN"`.
 4. Wait for the local private access tunnel to bind to `127.0.0.1:9191`.
 5. VS Code opens the remote host `kaggle_client`.
+
+If you prefer not to use the batch file, this command is equivalent:
+
+```powershell
+python zrok_client.py --token "YOUR_ZROK_TOKEN" --name "kaggle_client" --server_name "kaggle_server" --workspace "/kaggle/working"
+```
 
 ## Generated SSH Config
 
