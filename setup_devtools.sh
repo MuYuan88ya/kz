@@ -150,15 +150,24 @@ log() {
 
 mkdir -p "$MARKER_DIR"
 
+collect_code_servers() {
+    find "$HOME/.vscode-server" \
+        \( -path '*/bin/code-server' -o -path '*/server/bin/code-server' \) \
+        -type f 2>/dev/null | sort -u
+}
+
 for _ in $(seq 1 360); do
     found_server=0
-    for code_server in "$HOME"/.vscode-server/bin/*/bin/code-server; do
+    while IFS= read -r code_server; do
         if [ ! -x "$code_server" ]; then
             continue
         fi
 
         found_server=1
-        commit_dir="$(basename "$(dirname "$(dirname "$code_server")")")"
+        commit_dir="$(echo "$code_server" | sed -E 's#.*/(Stable-[^/]+|[0-9a-f]{40})(\.staging)?/.*#\1#')"
+        if [ -z "$commit_dir" ] || [ "$commit_dir" = "$code_server" ]; then
+            commit_dir="$(basename "$(dirname "$(dirname "$code_server")")")"
+        fi
         marker_file="$MARKER_DIR/$commit_dir.done"
 
         if [ -f "$marker_file" ]; then
@@ -180,7 +189,7 @@ for _ in $(seq 1 360); do
         else
             log "Will retry remote VS Code extension install for commit $commit_dir"
         fi
-    done
+    done < <(collect_code_servers)
 
     if [ "$found_server" -eq 1 ]; then
         if ls "$MARKER_DIR"/*.done >/dev/null 2>&1; then
