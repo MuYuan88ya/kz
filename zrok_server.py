@@ -146,12 +146,16 @@ def launch_devtools_setup():
     log_path = Path(DEFAULT_DEVTOOLS_LOG_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    env = os.environ.copy()
+    env["DEVTOOLS_WATCH_MODE"] = "foreground"
+
     with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
         process = subprocess.Popen(
             ["bash", str(script_path)],
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=env,
         )
 
     print(f"Started background devtools bootstrap (PID {process.pid})")

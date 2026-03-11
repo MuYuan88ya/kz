@@ -11,6 +11,7 @@ SHELL_RC="$HOME/.bashrc"
 PROFILE_FILE="$HOME/.profile"
 PROFILE_SNIPPET="$STATE_DIR/devtools-path.sh"
 CODEX_JS="$NPM_PREFIX/lib/node_modules/@openai/codex/bin/codex.js"
+WATCH_MODE="${DEVTOOLS_WATCH_MODE:-background}"
 
 EXTENSIONS=(
     "ms-python.python"
@@ -177,7 +178,7 @@ for _ in $(seq 1 360); do
         log "Installing remote VS Code extensions for commit $commit_dir"
         install_ok=1
         for extension in "${EXTENSIONS[@]}"; do
-            if ! "$code_server" --install-extension "$extension" --force >>"$LOG_FILE" 2>&1; then
+            if ! "$code_server" --install-extension "$extension" --force </dev/null >>"$LOG_FILE" 2>&1; then
                 install_ok=0
                 log "Failed to install extension $extension for commit $commit_dir"
             fi
@@ -216,8 +217,15 @@ start_watcher() {
         fi
     fi
 
+    if [ "$WATCH_MODE" = "foreground" ]; then
+        log "Running VS Code extension watcher in foreground mode"
+        echo $$ >"$WATCH_PID_FILE"
+        bash "$WATCH_SCRIPT" </dev/null >>"$LOG_FILE" 2>&1
+        return
+    fi
+
     log "Starting VS Code extension watcher..."
-    nohup bash "$WATCH_SCRIPT" >>"$LOG_FILE" 2>&1 &
+    nohup bash "$WATCH_SCRIPT" </dev/null >>"$LOG_FILE" 2>&1 &
     echo $! >"$WATCH_PID_FILE"
     log "VS Code extension watcher started with PID $(cat "$WATCH_PID_FILE")"
 }
