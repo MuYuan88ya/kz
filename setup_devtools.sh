@@ -71,13 +71,24 @@ EOF
 ensure_codex_cli() {
     export PATH="$NPM_PREFIX/bin:$PATH"
 
-    if [ -x "$NPM_PREFIX/bin/codex" ]; then
-        log "Codex CLI already installed: $("$NPM_PREFIX/bin/codex" --version)"
+    if [ -x "$NPM_PREFIX/bin/codex" ] && [ -f "$CODEX_JS" ]; then
+        if head -n 1 "$CODEX_JS" | grep -Fq '#!/bin/bash'; then
+            log "Detected a broken Codex CLI entrypoint, reinstalling package..."
+            npm install -g @openai/codex --prefix "$NPM_PREFIX" --force
+        else
+            log "Codex CLI already installed: $("$NPM_PREFIX/bin/codex" --version)"
+            return
+        fi
+    else
+        log "Installing Codex CLI..."
+        npm install -g @openai/codex --prefix "$NPM_PREFIX"
+    fi
+
+    if [ ! -f "$CODEX_JS" ]; then
+        log "Codex entrypoint not found after install: $CODEX_JS"
         return
     fi
 
-    log "Installing Codex CLI..."
-    npm install -g @openai/codex --prefix "$NPM_PREFIX"
     install_codex_wrapper
     log "Codex CLI installed: $(codex --version)"
 }
@@ -94,6 +105,7 @@ install_codex_wrapper() {
         exit 1
     fi
 
+    rm -f "$NPM_PREFIX/bin/codex"
     cat >"$NPM_PREFIX/bin/codex" <<EOF
 #!/bin/bash
 export PATH="$(dirname "$node_path"):$NPM_PREFIX/bin:\$PATH"
