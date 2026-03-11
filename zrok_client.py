@@ -5,7 +5,19 @@ import time
 import argparse
 import sys
 from pathlib import Path
+import socket
 from utils import Zrok
+
+
+def wait_for_local_access(port: int, timeout: int = 15):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(1)
+    return False
 
 
 def main(args):
@@ -23,7 +35,7 @@ def main(args):
         raise Exception(f"{args.server_name} environment not found. Are you running the notebook?")
 
     share_token = None
-    for share in env.get("shares", []):
+    for share in reversed(env.get("shares", [])):
         if (share.get("backendMode") == "tcpTunnel" and
             share.get("backendProxyEndpoint") == f"localhost:{args.port}"):
             share_token = share.get("shareToken")
@@ -39,8 +51,9 @@ def main(args):
         creationflags=subprocess.CREATE_NEW_CONSOLE
     )
 
-    # 3. Wait 5 seconds for zrok connection
-    time.sleep(5)
+    # 3. Wait for local zrok access listener
+    if not wait_for_local_access(9191, timeout=15):
+        raise Exception("Timed out waiting for local zrok access on 127.0.0.1:9191")
 
     # 4. Update SSH config
     config_path = os.path.join(os.environ['USERPROFILE'], '.ssh', 'config')

@@ -91,12 +91,20 @@ class Zrok:
         if overview is None:
             return None
 
+        matches = []
         for item in overview:
             env = item["environment"]
             if env["description"].lower() == name.lower():
-                return item
+                matches.append(item)
+
+        if not matches:
+            return None
+
+        shareful_matches = [item for item in matches if item.get("shares")]
+        if shareful_matches:
+            return shareful_matches[-1]
             
-        return None
+        return matches[-1]
 
     def delete_environment(self, zId: str):
         """Delete a zrok environment by its ID.
