@@ -102,16 +102,12 @@ cleanup() {
     [ -f /kaggle/working/kaggle_env_vars.txt ] && rm /kaggle/working/kaggle_env_vars.txt
 }
 
-(
-    install_packages
-    setup_cuda_environment
-    setup_ssh_directory &
-    configure_sshd &
-    wait
-    start_ssh_service &
-    wait
-    cleanup
-)
+install_packages
+setup_cuda_environment
+setup_ssh_directory
+configure_sshd
+start_ssh_service
+cleanup
 
 echo "Setup script completed successfully"
 echo "All tasks completed successfully"
