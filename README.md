@@ -116,10 +116,7 @@ If everything is correct, it will:
 - find the `kaggle_server` share
 - open local access on `127.0.0.1:9191`
 - update `%USERPROFILE%\.ssh\config`
-- update local VS Code `remote.SSH.defaultExtensions` with:
-  - `ms-python.python`
-  - `ms-toolsai.jupyter`
-  - `openai.chatgpt`
+- update local VS Code remote extension defaults
 - open VS Code Remote SSH
 
 ### Password-based init

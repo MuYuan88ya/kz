@@ -41,6 +41,18 @@ def resolve_ssh_executable():
     return "ssh"
 
 
+def resolve_scp_executable():
+    resolved = shutil.which("scp")
+    if resolved:
+        return resolved
+
+    windows_scp = Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "OpenSSH" / "scp.exe"
+    if windows_scp.exists():
+        return str(windows_scp)
+
+    return "scp"
+
+
 def wait_for_ssh_ready(host: str, timeout: int = 20):
     ssh_exe = resolve_ssh_executable()
     deadline = time.time() + timeout
@@ -95,6 +107,34 @@ def update_vscode_remote_extensions():
         f.write("\n")
 
     print("VS Code remote extension defaults updated")
+
+
+def sync_codex_auth(host: str):
+    local_auth = Path(os.environ["USERPROFILE"]) / ".codex" / "auth.json"
+    if not local_auth.exists():
+        print(f"Local Codex auth not found at {local_auth}; skipping remote sync")
+        return
+
+    ssh_exe = resolve_ssh_executable()
+    scp_exe = resolve_scp_executable()
+
+    mkdir_result = subprocess.run(
+        [ssh_exe, host, "mkdir", "-p", "/root/.codex"],
+        capture_output=True,
+        text=True,
+    )
+    if mkdir_result.returncode != 0:
+        raise Exception(f"Failed to create /root/.codex on remote host {host}")
+
+    copy_result = subprocess.run(
+        [scp_exe, str(local_auth), f"{host}:/root/.codex/auth.json"],
+        capture_output=True,
+        text=True,
+    )
+    if copy_result.returncode != 0:
+        raise Exception(f"Failed to copy Codex auth.json to remote host {host}")
+
+    print("Codex auth synced to /root/.codex/auth.json")
 
 
 def main(args):
@@ -217,6 +257,7 @@ def main(args):
     if not wait_for_ssh_ready(args.name, timeout=20):
         raise Exception(f"Timed out waiting for SSH login on host {args.name}")
 
+    sync_codex_auth(args.name)
     update_vscode_remote_extensions()
 
     # 5. Launch VS Code remote-SSH
