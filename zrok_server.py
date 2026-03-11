@@ -9,6 +9,7 @@ from utils import Zrok
 import string
 import random
 import stat
+import socket
 
 DEFAULT_STATE_DIR = "/kaggle/working/.kaggle_remote_zrok"
 DEFAULT_AUTHORIZED_KEYS_PATH = "/kaggle/working/.ssh/authorized_keys"
@@ -104,6 +105,36 @@ def prepare_kaggle_runtime_files():
     )
 
 
+def wait_for_local_port(host: str, port: int, timeout: int = 10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(1)
+    return False
+
+
+def run_ssh_setup(runtime):
+    if runtime["authorized_keys_url"]:
+        result = subprocess.run(["bash", "setup_ssh.sh", runtime["authorized_keys_url"]], check=False)
+    else:
+        result = subprocess.run(["bash", "setup_ssh.sh"], check=False)
+
+    if result.returncode == 0:
+        return
+
+    if wait_for_local_port("127.0.0.1", runtime["port"], timeout=10):
+        print(
+            f"setup_ssh.sh exited with status {result.returncode}, "
+            f"but localhost:{runtime['port']} is accepting connections; continuing"
+        )
+        return
+
+    raise subprocess.CalledProcessError(result.returncode, result.args)
+
+
 def build_runtime_config(args):
     if args.start:
         config = load_saved_config(args.state_dir)
@@ -169,10 +200,7 @@ def main(args):
     
     # Setup SSH server
     print("Setting up SSH server...")
-    if runtime["authorized_keys_url"]:
-        subprocess.run(["bash", "setup_ssh.sh", runtime["authorized_keys_url"]], check=True)
-    else:
-        subprocess.run(["bash", "setup_ssh.sh"], check=True)
+    run_ssh_setup(runtime)
 
     if runtime["password"] is not None:
         print(f"Setting password for root user: {runtime['password']}")
@@ -214,7 +242,7 @@ if __name__ == "__main__":
         main(args)
     except Exception as e:
         print(e)
-        if sys.stdin.isatty():
+        if sys.stdin.isatty() and "KAGGLE_KERNEL_RUN_TYPE" not in os.environ:
             try:
                 input("An error occurred. Press Enter to exit...")
             except EOFError:
