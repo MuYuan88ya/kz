@@ -95,8 +95,15 @@ Enter your zrok token:
 Recommended token handling:
 
 - Best: set an environment variable named `ZROK_TOKEN`
-- Fallback: paste the token into the batch window when prompted
+- Otherwise the launcher will reuse a locally cached token from your user profile
+- Fallback: paste the token into the batch window when prompted once
 - Do not hardcode the token into `start_client.bat`
+
+The launcher looks for `zrok` in this order:
+
+1. `zrok` from `PATH`
+2. `zrok.exe` in the project directory
+3. `ZROK_BIN`
 
 PowerShell example:
 
@@ -114,6 +121,20 @@ $env:ZROK_TOKEN="YOUR_ZROK_TOKEN"
 ```
 
 If you do not set `ZROK_TOKEN`, paste your token there and press Enter.
+
+After the first successful input, `start_client.bat` stores the token in:
+
+```text
+%USERPROFILE%\.kaggle_remote_zrok\zrok_token.txt
+```
+
+On later runs it will reuse that token automatically, so you do not need to paste it again.
+
+To clear the saved token, delete:
+
+```text
+%USERPROFILE%\.kaggle_remote_zrok\zrok_token.txt
+```
 
 Recommended flow:
 

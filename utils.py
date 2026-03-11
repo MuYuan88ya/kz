@@ -25,10 +25,6 @@ class Zrok:
 
     @staticmethod
     def resolve_executable():
-        env_cli = os.environ.get("ZROK_BIN")
-        if env_cli and os.path.exists(env_cli):
-            return env_cli
-
         for command in ("zrok", "zrok.exe"):
             resolved = shutil.which(command)
             if resolved:
@@ -39,6 +35,10 @@ class Zrok:
             candidate = os.path.join(base_dir, filename)
             if os.path.exists(candidate):
                 return candidate
+
+        env_cli = os.environ.get("ZROK_BIN")
+        if env_cli and os.path.exists(env_cli):
+            return env_cli
 
         return "zrok"
 

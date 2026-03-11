@@ -1,8 +1,10 @@
 import os
+import re
 import subprocess
 import time
 import argparse
 import sys
+from pathlib import Path
 from utils import Zrok
 
 
@@ -49,20 +51,78 @@ def main(args):
     
     with open(config_path, 'r', encoding='utf-8') as f:
         content = f.read()
-    
-    entry = f"""Host {args.name}
-    HostName 127.0.0.1
-    User root
-    Port 9191
-    IdentityFile ~/.ssh/kaggle_rsa
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null""".strip("\n")
 
-    if f"Host {args.name}" not in content:
-        with open(config_path, 'w', encoding='utf-8', newline='') as f:
-            f.write(content.rstrip("\n") + "\n" + entry)
+    entry_lines = [
+        f"Host {args.name}",
+        "    HostName 127.0.0.1",
+        "    User root",
+        "    Port 9191",
+    ]
+
+    identity_file = Path(os.environ['USERPROFILE']) / '.ssh' / 'kaggle_rsa'
+    if identity_file.exists():
+        entry_lines.append("    IdentityFile ~/.ssh/kaggle_rsa")
     else:
-        print(f"SSH config already contains {args.name} entry")
+        entry_lines.extend([
+            "    PreferredAuthentications password",
+            "    PubkeyAuthentication no",
+        ])
+
+    entry_lines.extend([
+        "    StrictHostKeyChecking no",
+        "    UserKnownHostsFile /dev/null",
+    ])
+    entry = "\n".join(entry_lines)
+
+    host_pattern = re.compile(
+        rf"(?ms)^Host\s+{re.escape(args.name)}\s*$.*?(?=^Host\s+\S|\Z)"
+    )
+    if host_pattern.search(content):
+        new_content = host_pattern.sub(entry + "\n", content).rstrip("\n") + "\n"
+        print(f"SSH config updated for {args.name}")
+    else:
+        new_content = content.rstrip("\n")
+        if new_content:
+            new_content += "\n"
+        new_content += entry + "\n"
+        print(f"SSH config created for {args.name}")
+
+    user_name = None
+    if os.name == 'nt':
+        user_name = f"{os.environ.get('COMPUTERNAME')}\\{os.environ.get('USERNAME')}"
+        subprocess.run(
+            [
+                "icacls",
+                config_path,
+                "/inheritance:r",
+                "/grant:r",
+                f"{user_name}:(F)",
+                "SYSTEM:(F)",
+                "Administrators:(F)",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    with open(config_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(new_content)
+
+    if os.name == 'nt' and user_name:
+        subprocess.run(
+            [
+                "icacls",
+                config_path,
+                "/inheritance:r",
+                "/grant:r",
+                f"{user_name}:(R)",
+                "SYSTEM:(F)",
+                "Administrators:(F)",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
     # 5. Launch VS Code remote-SSH
     if not args.no_vscode:

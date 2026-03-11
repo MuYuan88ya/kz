@@ -3,13 +3,20 @@ setlocal
 
 cd /d "%~dp0"
 
-REM Preferred: set ZROK_TOKEN in your shell or user environment.
-REM Fallback: paste the token into the console when prompted.
-REM Do not save a real token in this file if you plan to commit it.
+REM zrok lookup order:
+REM 1. zrok from PATH
+REM 2. zrok.exe in this project directory
+REM 3. ZROK_BIN environment variable
+REM Token lookup order:
+REM 1. ZROK_TOKEN environment variable
+REM 2. local cached token file in user profile
+REM 3. pasted into the console when prompted
 
 set "NAME=kaggle_client"
 set "SERVER_NAME=kaggle_server"
 set "WORKSPACE=/kaggle/working"
+set "TOKEN_CACHE_DIR=%USERPROFILE%\.kaggle_remote_zrok"
+set "TOKEN_CACHE_FILE=%TOKEN_CACHE_DIR%\zrok_token.txt"
 
 set "PATH=%CD%;%PATH%"
 
@@ -33,16 +40,25 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
-set "ZROK_EXE=%ZROK_BIN%"
-if defined ZROK_EXE if exist "%ZROK_EXE%" (
-    for %%I in ("%ZROK_EXE%") do set "PATH=%%~dpI;%PATH%"
-) else (
-    set "ZROK_EXE="
-)
-
 if not defined ZROK_EXE (
     where zrok >nul 2>nul
     if not errorlevel 1 set "ZROK_EXE=zrok"
+)
+
+if not defined ZROK_EXE (
+    if exist "%CD%\zrok.exe" set "ZROK_EXE=%CD%\zrok.exe"
+)
+
+if not defined ZROK_EXE (
+    set "ZROK_EXE=%ZROK_BIN%"
+)
+
+if defined ZROK_EXE if /I not "%ZROK_EXE%"=="zrok" if exist "%ZROK_EXE%" (
+    for %%I in ("%ZROK_EXE%") do set "PATH=%%~dpI;%PATH%"
+)
+
+if defined ZROK_EXE if /I not "%ZROK_EXE%"=="zrok" if not exist "%ZROK_EXE%" (
+    set "ZROK_EXE="
 )
 
 if not defined ZROK_EXE (
@@ -62,11 +78,17 @@ if not defined ZROK_EXE (
 )
 
 set "TOKEN=%ZROK_TOKEN%"
+if not defined TOKEN if exist "%TOKEN_CACHE_FILE%" set /p TOKEN=<"%TOKEN_CACHE_FILE%"
 if not defined TOKEN set /p TOKEN=Enter your zrok token:
 if not defined TOKEN (
     echo Token is required.
     pause
     exit /b 1
+)
+
+if not exist "%TOKEN_CACHE_DIR%" mkdir "%TOKEN_CACHE_DIR%" >nul 2>nul
+> "%TOKEN_CACHE_FILE%" (
+    echo %TOKEN%
 )
 
 "%PYTHON_EXE%" zrok_client.py --token "%TOKEN%" --name "%NAME%" --server_name "%SERVER_NAME%" --workspace "%WORKSPACE%"
