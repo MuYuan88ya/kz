@@ -105,6 +105,14 @@ $env:ZROK_TOKEN="YOUR_ZROK_TOKEN"
 .\start_client.bat
 ```
 
+If `zrok` is not in `PATH`, point the launcher at it explicitly:
+
+```powershell
+$env:ZROK_BIN="C:\path\to\zrok.exe"
+$env:ZROK_TOKEN="YOUR_ZROK_TOKEN"
+.\start_client.bat
+```
+
 If you do not set `ZROK_TOKEN`, paste your token there and press Enter.
 
 Recommended flow:
@@ -191,6 +199,12 @@ zrok enable YOUR_ZROK_TOKEN
 ### `zrok` not found on Windows
 
 Install `zrok` from the official docs and ensure the command is available in `PATH`.
+
+If you do not want to modify `PATH`, set:
+
+```powershell
+$env:ZROK_BIN="C:\path\to\zrok.exe"
+```
 
 ## Files
 

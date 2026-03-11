@@ -33,6 +33,34 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
+set "ZROK_EXE=%ZROK_BIN%"
+if defined ZROK_EXE if exist "%ZROK_EXE%" (
+    for %%I in ("%ZROK_EXE%") do set "PATH=%%~dpI;%PATH%"
+) else (
+    set "ZROK_EXE="
+)
+
+if not defined ZROK_EXE (
+    where zrok >nul 2>nul
+    if not errorlevel 1 set "ZROK_EXE=zrok"
+)
+
+if not defined ZROK_EXE (
+    echo zrok not found.
+    echo.
+    echo Option 1:
+    echo   Install zrok and make sure `zrok` is available in PATH.
+    echo   https://docs.zrok.io/docs/guides/install/
+    echo.
+    echo Option 2:
+    echo   Set environment variable ZROK_BIN to the full path of zrok.exe
+    echo   Example:
+    echo   setx ZROK_BIN "C:\path\to\zrok.exe"
+    echo.
+    pause
+    exit /b 1
+)
+
 set "TOKEN=%ZROK_TOKEN%"
 if not defined TOKEN set /p TOKEN=Enter your zrok token:
 if not defined TOKEN (

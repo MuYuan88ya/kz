@@ -25,6 +25,10 @@ class Zrok:
 
     @staticmethod
     def resolve_executable():
+        env_cli = os.environ.get("ZROK_BIN")
+        if env_cli and os.path.exists(env_cli):
+            return env_cli
+
         for command in ("zrok", "zrok.exe"):
             resolved = shutil.which(command)
             if resolved:
@@ -169,8 +173,7 @@ class Zrok:
         if platform.system() != 'Linux':
             if Zrok.is_installed():
                 return
-            raise Exception("This script only works on Linux. For other operating systems, \
-                            please install zrok manually following the instructions at https://docs.zrok.io/docs/guides/install/")
+            raise Exception("zrok was not found on this machine. Install it from https://docs.zrok.io/docs/guides/install/ and ensure `zrok` is in PATH, or set ZROK_BIN to the full zrok executable path.")
 
         print("Downloading latest zrok release")
         # Get latest release info
