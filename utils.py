@@ -51,21 +51,31 @@ class Zrok:
             dict: Overview data containing environments information
             None: If the API call fails or no environments exist
         """
-        req = urllib.request.Request(
-            url=f"{self.base_url}/overview",
-            headers={"x-token": self.token},
-        )
+        try:
+            result = subprocess.run(
+                [self.cli, "overview"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            data = json.loads(result.stdout)
+            return data["environments"]
+        except Exception:
+            req = urllib.request.Request(
+                url=f"{self.base_url}/overview",
+                headers={"x-token": self.token},
+            )
 
-        with urllib.request.urlopen(req) as response:
-            status = response.getcode()
-            data = response.read().decode('utf-8')
-            data = json.loads(data) 
+            with urllib.request.urlopen(req) as response:
+                status = response.getcode()
+                data = response.read().decode('utf-8')
+                data = json.loads(data)
 
-        if status != 200:
-            print(f"Error: {status}")
-            raise Exception("zrok API overview error")
-        
-        return data['environments']
+            if status != 200:
+                print(f"Error: {status}")
+                raise Exception("zrok API overview error")
+            
+            return data['environments']
 
     def find_env(self, name: str):
         """Find a specific environment by its name.
@@ -156,9 +166,13 @@ class Zrok:
             print("zrok already disable")
 
         # Delete environment via HTTP communication even if zrok is not enabled
-        env = self.find_env(env_name)
-        if env is not None:
-            self.delete_environment(env['environment']['zId'])
+        try:
+            env = self.find_env(env_name)
+            if env is not None:
+                self.delete_environment(env['environment']['zId'])
+        except Exception as e:
+            print(e)
+            print("failed to delete remote zrok environment; continuing")
 
     @staticmethod
     def install():
