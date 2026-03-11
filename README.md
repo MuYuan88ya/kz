@@ -63,6 +63,7 @@ This init step:
 - starts the private zrok share
 
 You do not need to run extra prep like `chmod +x ...` or `printenv > /kaggle/working/kaggle_env_vars.txt` manually. `zrok_server.py` now runs that `printenv` capture itself before calling `setup_ssh.sh`, and the environment dump is kept in `/kaggle/working` for later SSH sessions.
+The SSH bootstrap also tolerates Kaggle service-management quirks where `service ssh` may print success but still return a non-zero status.
 
 ### Step 3: Keep Kaggle running
 

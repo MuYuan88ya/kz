@@ -97,8 +97,20 @@ install_packages() {
 }
 
 start_ssh_service() {
-    service ssh start
-    service ssh restart
+    echo "Starting ssh service..."
+    if ! service ssh start; then
+        echo "service ssh start returned a non-zero exit code; continuing"
+    fi
+
+    echo "Restarting ssh service..."
+    if ! service ssh restart; then
+        echo "service ssh restart returned a non-zero exit code; continuing"
+    fi
+
+    echo "Checking ssh service status..."
+    if ! service ssh status; then
+        echo "service ssh status returned a non-zero exit code; continuing"
+    fi
 }
 
 cleanup() {
