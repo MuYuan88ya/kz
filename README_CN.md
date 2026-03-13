@@ -126,7 +126,24 @@ Host kaggle_client
     IdentityFile ~/.ssh/kaggle_rsa    # 若密钥存在
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
+    Compression yes
+    ServerAliveInterval 15
+    ServerAliveCountMax 3
 ```
+
+---
+
+## 高延迟网络体验优化（降低打字卡顿）
+
+如果你人在国内连接位于美国的 Kaggle 服务器，物理网络延迟（通常 200ms+）加上隧道的路由中转会导致在 VS Code 中打字时感觉非常“粘手”（按下按键要等很长时间才显示）。
+
+此时**强烈建议**在 VS Code 中开启**终端本地回显**：
+
+1. 在 VS Code 中打开设置 (`Ctrl + ,`)
+2. 搜索 `terminal.integrated.localEchoEnabled`
+3. 将其设置为 `on` 或 `auto`
+
+开启后，你在终端敲击的字符会瞬间以灰色显示在本地，无需等待服务器的回声，这将**极大改善**高延迟下的主观输入体验。同时，生成的 SSH 配置中已默认开启 `Compression` 以加速文本传输，并启用了 `ServerAlive` 机制防止高延迟断连。
 
 ---
 

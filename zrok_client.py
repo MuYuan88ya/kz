@@ -87,6 +87,9 @@ def update_ssh_config(name):
     lines.extend([
         "    StrictHostKeyChecking no",
         "    UserKnownHostsFile /dev/null",
+        "    Compression yes",
+        "    ServerAliveInterval 15",
+        "    ServerAliveCountMax 3",
     ])
     entry = "\n".join(lines)
 

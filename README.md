@@ -126,7 +126,24 @@ Host kaggle_client
     IdentityFile ~/.ssh/kaggle_rsa    # if key exists
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
+    Compression yes
+    ServerAliveInterval 15
+    ServerAliveCountMax 3
 ```
+
+---
+
+## High Latency Network Optimization (Reduce Typing Lag)
+
+If you are connecting to a Kaggle server (usually in the US) from far away, the physical network latency (often 200ms+) combined with the tunnel routing can cause a noticeable lag when typing in VS Code.
+
+To **drastically improve** your typing experience, it is highly recommended to enable **Local Echo** in the VS Code terminal:
+
+1. Open VS Code Settings (`Ctrl + ,` or `Cmd + ,`)
+2. Search for `terminal.integrated.localEchoEnabled`
+3. Set it to `on` or `auto`
+
+When enabled, your keystrokes will instantly appear locally in gray while waiting for the server to acknowledge them, eliminating the subjective feeling of typing lag. Note that the generated SSH config also includes `Compression` to accelerate text transfer and `ServerAlive` settings to prevent drops on unstable connections.
 
 ---
 
