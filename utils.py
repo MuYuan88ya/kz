@@ -6,8 +6,12 @@ import json
 import subprocess
 import platform
 import shutil
+import tempfile
+from pathlib import Path
 
 class Zrok:
+    DEFAULT_LINUX_CACHE_DIR = Path("/kaggle/working/.kaggle_remote_zrok/bin")
+
     def __init__(self, token: str, name: str = None):
         """Initialize Zrok instance with API token and optional environment name.
         
@@ -40,7 +44,30 @@ class Zrok:
         if env_cli and os.path.exists(env_cli):
             return env_cli
 
+        cached_cli = Zrok.cached_executable_path()
+        if cached_cli and cached_cli.exists():
+            return str(cached_cli)
+
         return "zrok"
+
+    @staticmethod
+    def cached_executable_path():
+        if platform.system() != "Linux":
+            return None
+
+        cache_dir = Path(os.environ.get("ZROK_CACHE_DIR", str(Zrok.DEFAULT_LINUX_CACHE_DIR)))
+        candidate = cache_dir / "zrok"
+        if candidate.exists():
+            return candidate
+        return None
+
+    @staticmethod
+    def executable_works(cli_path: str):
+        try:
+            subprocess.run([cli_path, "version"], capture_output=True, text=True, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError, PermissionError):
+            return False
 
     def get_env(self):
         """Get overview of all zrok environments using HTTP API.
@@ -197,6 +224,11 @@ class Zrok:
                 return
             raise Exception("zrok was not found on this machine. Install it from https://docs.zrok.io/docs/guides/install/ and ensure `zrok` is in PATH, or set ZROK_BIN to the full zrok executable path.")
 
+        cached_cli = Zrok.cached_executable_path()
+        if cached_cli and Zrok.executable_works(str(cached_cli)):
+            print(f"Using cached zrok from {cached_cli}")
+            return
+
         print("Downloading latest zrok release")
         # Get latest release info
         response = urllib.request.urlopen("https://api.github.com/repos/openziti/zrok/releases/latest")
@@ -211,20 +243,35 @@ class Zrok:
         
         if not download_url:
             raise FileNotFoundError("Could not find zrok download URL for linux_amd64")
-        
-        # Download zrok
-        urllib.request.urlretrieve(download_url, "zrok.tar.gz")
-        
-        print("Extracting Zrok")
-        with tarfile.open("zrok.tar.gz", "r:gz") as tar:
-            tar.extractall("/usr/local/bin/")
-        os.remove("zrok.tar.gz")
+
+        cache_dir = Path(os.environ.get("ZROK_CACHE_DIR", str(Zrok.DEFAULT_LINUX_CACHE_DIR)))
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target_path = cache_dir / "zrok"
+
+        with tempfile.TemporaryDirectory(dir=str(cache_dir)) as temp_dir:
+            archive_path = Path(temp_dir) / "zrok.tar.gz"
+            urllib.request.urlretrieve(download_url, archive_path)
+
+            print(f"Extracting zrok to {target_path}")
+            with tarfile.open(archive_path, "r:gz") as tar:
+                member = next((item for item in tar.getmembers() if Path(item.name).name == "zrok"), None)
+                if member is None:
+                    raise FileNotFoundError("Could not find zrok binary in downloaded archive")
+
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    raise FileNotFoundError("Could not extract zrok binary from downloaded archive")
+
+                with open(target_path, "wb") as output_file:
+                    shutil.copyfileobj(extracted, output_file)
+
+        target_path.chmod(0o755)
 
         # Check if zrok is installed correctly
         if not Zrok.is_installed():
             raise RuntimeError("Failed to verify zrok installation")
-        
-        print("Successfully installed zrok")
+
+        print(f"Successfully installed zrok to {target_path}")
 
     @staticmethod
     def is_installed():
@@ -233,11 +280,7 @@ class Zrok:
         Returns:
             bool: True if zrok is installed and can be executed, False otherwise
         """
-        try:
-            subprocess.run([Zrok.resolve_executable(), "version"], check=True)
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
+        return Zrok.executable_works(Zrok.resolve_executable())
 
     @staticmethod
     def is_enabled() -> bool:

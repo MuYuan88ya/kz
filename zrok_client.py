@@ -142,6 +142,7 @@ def main(args):
     
     if not Zrok.is_installed():
         Zrok.install()
+        zrok.cli = Zrok.resolve_executable()
 
     zrok.disable()
     zrok.enable()

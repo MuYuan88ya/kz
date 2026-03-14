@@ -1,10 +1,9 @@
 #!/bin/bash
 
-set -e # Exit immediately if a command exits with a non-zero status
+set -euo pipefail
 
-# Function to export environment variables from a file
 export_env_vars_from_file() {
-    local env_file=$1
+    local env_file="$1"
     while IFS= read -r line; do
         if [[ "$line" =~ ^[A-Z0-9_]+=.* ]]; then
             export "$line"
@@ -12,8 +11,11 @@ export_env_vars_from_file() {
     done <"$env_file"
 }
 
-# Path to the captured environment variables file
-ENV_VARS_FILE=/kaggle/working/kaggle_env_vars.txt
+ENV_VARS_FILE="/kaggle/working/kaggle_env_vars.txt"
+AUTH_KEYS_URL="${1:-}"
+AUTHORIZED_KEYS_FILE="/kaggle/working/.ssh/authorized_keys"
+SSHD_DROPIN_FILE="/etc/ssh/sshd_config.d/kaggle_remote.conf"
+BASH_RC="$HOME/.bashrc"
 
 if [ -f "$ENV_VARS_FILE" ]; then
     echo "Exporting environment variables from $ENV_VARS_FILE"
@@ -21,28 +23,30 @@ if [ -f "$ENV_VARS_FILE" ]; then
 else
     echo "Environment variables file $ENV_VARS_FILE not found"
     echo "Capturing current environment variables to $ENV_VARS_FILE"
-    printenv > "$ENV_VARS_FILE"
+    printenv >"$ENV_VARS_FILE"
     export_env_vars_from_file "$ENV_VARS_FILE"
 fi
 
-# Make authorized keys URL optional
-AUTH_KEYS_URL=$1
-AUTHORIZED_KEYS_FILE=/kaggle/working/.ssh/authorized_keys
-SSHD_DROPIN_FILE=/etc/ssh/sshd_config.d/kaggle_remote.conf
-
 setup_cuda_environment() {
-    echo "Setting up CUDA environment variables..."
+    if grep -Fq '# kaggle-remote-zrok cuda env' "$BASH_RC" 2>/dev/null; then
+        echo "CUDA environment variables already configured in $BASH_RC"
+        return
+    fi
 
-    echo "export CUDA_HOME=/usr/local/cuda" >> ~/.bashrc
-    echo "export PATH=/usr/local/cuda/bin:/opt/bin:\$PATH" >> ~/.bashrc
-    echo "export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:\$LD_LIBRARY_PATH" >> ~/.bashrc
-    
+    cat >>"$BASH_RC" <<'EOF'
+
+# kaggle-remote-zrok cuda env
+export CUDA_HOME=/usr/local/cuda
+export PATH=/usr/local/cuda/bin:/opt/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
+EOF
+
     echo "CUDA environment variables set successfully"
 }
 
 setup_ssh_directory() {
     mkdir -p /kaggle/working/.ssh
-    if [ ! -z "$AUTH_KEYS_URL" ]; then
+    if [ -n "$AUTH_KEYS_URL" ]; then
         if wget -qO "$AUTHORIZED_KEYS_FILE" "$AUTH_KEYS_URL"; then
             chmod 700 /kaggle/working/.ssh
             chmod 600 "$AUTHORIZED_KEYS_FILE"
@@ -59,7 +63,6 @@ setup_ssh_directory() {
         echo "No authorized keys URL provided. Continuing without authorized keys setup..."
     fi
 }
-
 
 configure_sshd() {
     mkdir -p /var/run/sshd
@@ -91,6 +94,11 @@ configure_sshd() {
 }
 
 install_packages() {
+    if command -v sshd >/dev/null 2>&1; then
+        echo "openssh-server already available; skipping install"
+        return
+    fi
+
     echo "Installing openssh-server..."
     sudo apt-get update
     sudo apt-get install -y openssh-server
