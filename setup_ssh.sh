@@ -44,7 +44,6 @@ mkdir -p /etc/ssh/sshd_config.d
 
 cat >"$SSHD_DROPIN_FILE" <<EOF
 Port 22
-Protocol 2
 PermitRootLogin yes
 PasswordAuthentication yes
 PubkeyAuthentication yes
@@ -55,7 +54,6 @@ X11DisplayOffset 10
 IgnoreRhosts yes
 HostbasedAuthentication no
 PrintLastLog yes
-ChallengeResponseAuthentication no
 UsePAM yes
 AcceptEnv LANG LC_*
 AllowTcpForwarding yes
@@ -90,7 +88,7 @@ fi
 
 # ── Start sshd ─────────────────────────────────────────────────────
 echo "Starting SSH service..."
-service ssh restart || echo "service ssh restart returned non-zero; continuing"
-service ssh status  || echo "service ssh status returned non-zero; continuing"
+service ssh restart || { echo "service ssh restart failed"; exit 1; }
+service ssh status  || { echo "service ssh status failed"; exit 1; }
 
 echo "SSH setup completed successfully"

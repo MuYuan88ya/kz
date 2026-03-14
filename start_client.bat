@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-REM ── Configuration ─────────────────────────────────────────────────
+REM -- Configuration --
 set "NAME=kaggle_client"
 set "SERVER_NAME=kaggle_server"
 set "WORKSPACE=/kaggle/working"
@@ -16,7 +16,7 @@ set "NEW_KAGGLE_KEY="
 
 set "PATH=%CD%;%PATH%"
 
-REM ── Find Python ───────────────────────────────────────────────────
+REM -- Find Python --
 set "PYTHON_EXE="
 if exist "%CD%\.venv\Scripts\python.exe" set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
 if not defined PYTHON_EXE if exist "%LocalAppData%\Programs\Python\Python311\python.exe" set "PYTHON_EXE=%LocalAppData%\Programs\Python\Python311\python.exe"
@@ -29,7 +29,7 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
-REM ── Find zrok ─────────────────────────────────────────────────────
+REM -- Find zrok --
 set "ZROK_EXE="
 where zrok >nul 2>nul && set "ZROK_EXE=zrok"
 if not defined ZROK_EXE if exist "%CD%\zrok.exe" set "ZROK_EXE=%CD%\zrok.exe"
@@ -48,7 +48,7 @@ if not defined ZROK_EXE (
     exit /b 1
 )
 
-REM ── Generate SSH key if needed ────────────────────────────────────
+REM -- Generate SSH key if needed --
 if not exist "%KAGGLE_KEY%" (
     where ssh-keygen >nul 2>nul
     if not errorlevel 1 (
@@ -59,7 +59,7 @@ if not exist "%KAGGLE_KEY%" (
     )
 )
 
-REM ── Get token ─────────────────────────────────────────────────────
+REM -- Get token --
 set "TOKEN=%ZROK_TOKEN%"
 if not defined TOKEN if exist "%TOKEN_CACHE_FILE%" set /p TOKEN=<"%TOKEN_CACHE_FILE%"
 if not defined TOKEN set /p TOKEN=Enter your zrok token:
@@ -79,7 +79,7 @@ if defined NEW_KAGGLE_KEY if exist "%KAGGLE_PUBKEY%" (
     echo.
 )
 
-REM ── Launch client ─────────────────────────────────────────────────
+REM -- Launch client --
 "%PYTHON_EXE%" zrok_client.py --token "%TOKEN%" --name "%NAME%" --server_name "%SERVER_NAME%" --workspace "%WORKSPACE%"
 set "EXIT_CODE=%ERRORLEVEL%"
 

@@ -90,14 +90,16 @@ def run_ssh_setup(authorized_keys_url):
         cmd.append(authorized_keys_url)
 
     result = subprocess.run(cmd, check=False)
-    if result.returncode == 0:
-        return
-
+    
     if wait_for_port("127.0.0.1", 22, timeout=10):
-        print(f"setup_ssh.sh exited {result.returncode}, but SSH is listening; continuing")
+        if result.returncode != 0:
+            print(f"setup_ssh.sh exited {result.returncode}, but SSH is listening; continuing")
         return
 
-    raise subprocess.CalledProcessError(result.returncode, result.args)
+    if result.returncode == 0:
+        raise Exception("setup_ssh.sh completed but SSH is not listening on port 22.")
+    else:
+        raise subprocess.CalledProcessError(result.returncode, result.args)
 
 
 def launch_devtools():

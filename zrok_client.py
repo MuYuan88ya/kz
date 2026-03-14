@@ -53,6 +53,11 @@ def wait_for_ssh_ready(host, timeout=20):
         )
         if result.returncode == 0:
             return True
+        # If we get "Permission denied", the SSH server is up but requires a password or valid key.
+        # This is fine, we can let VS Code handle the auth prompt.
+        if "Permission denied" in result.stderr:
+            print("SSH server is ready (authentication required).")
+            return True
         time.sleep(1)
     return False
 
