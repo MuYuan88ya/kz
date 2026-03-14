@@ -220,6 +220,8 @@ def main(args):
         Zrok.install()
         zrok.cli = Zrok.resolve_executable()
 
+    print(f"Using zrok executable: {zrok.cli}")
+
     zrok.disable()
     zrok.enable()
 

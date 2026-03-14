@@ -33,6 +33,14 @@ ensure_state_dir() {
     touch "$LOG_FILE"
 }
 
+find_cached_node_dir() {
+    find "$NODE_RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type d -name 'node-v*' 2>/dev/null | sort -V | tail -n 1
+}
+
+find_cached_node_archive() {
+    find "$NODE_RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type f -name "node-v*-${NODE_PLATFORM}.tar.xz" 2>/dev/null | sort -V | tail -n 1
+}
+
 fetch_to_stdout() {
     local url="$1"
     if command -v curl >/dev/null 2>&1; then
@@ -74,6 +82,15 @@ use_cached_node_runtime() {
         return 0
     fi
 
+    cached_node_dir="$(find_cached_node_dir)"
+    if [ -n "${cached_node_dir:-}" ] && [ -x "$cached_node_dir/bin/node" ] && [ -x "$cached_node_dir/bin/npm" ]; then
+        ln -sfn "$cached_node_dir" "$NODE_CURRENT_LINK"
+        export PATH="$NODE_CURRENT_LINK/bin:$PATH"
+        log "Using discovered cached Node runtime from $cached_node_dir: $(node --version)"
+        log "Using discovered cached npm: $(npm --version)"
+        return 0
+    fi
+
     return 1
 }
 
@@ -82,21 +99,30 @@ install_cached_node_runtime() {
     local archive_name
     local archive_path
     local extracted_dir
+    local cached_archive
 
-    archive_name="$(fetch_to_stdout "$base_url/SHASUMS256.txt" | awk "/${NODE_PLATFORM}\\.tar\\.xz$/ { print \$2; exit }")"
-    if [ -z "$archive_name" ]; then
-        log "Could not resolve a Node archive for ${NODE_PLATFORM}"
-        return 1
-    fi
-
-    archive_path="$NODE_RUNTIME_DIR/$archive_name"
-    extracted_dir="$NODE_RUNTIME_DIR/${archive_name%.tar.xz}"
-
-    if [ ! -f "$archive_path" ]; then
-        log "Downloading persistent Node runtime $archive_name"
-        download_file "$base_url/$archive_name" "$archive_path"
+    cached_archive="$(find_cached_node_archive)"
+    if [ -n "${cached_archive:-}" ]; then
+        archive_path="$cached_archive"
+        archive_name="$(basename "$archive_path")"
+        extracted_dir="$NODE_RUNTIME_DIR/${archive_name%.tar.xz}"
+        log "Reusing discovered cached Node archive $archive_name"
     else
-        log "Reusing cached Node archive $archive_name"
+        archive_name="$(fetch_to_stdout "$base_url/SHASUMS256.txt" | awk "/${NODE_PLATFORM}\\.tar\\.xz$/ { print \$2; exit }")"
+        if [ -z "$archive_name" ]; then
+            log "Could not resolve a Node archive for ${NODE_PLATFORM}"
+            return 1
+        fi
+
+        archive_path="$NODE_RUNTIME_DIR/$archive_name"
+        extracted_dir="$NODE_RUNTIME_DIR/${archive_name%.tar.xz}"
+
+        if [ ! -f "$archive_path" ]; then
+            log "Downloading persistent Node runtime $archive_name"
+            download_file "$base_url/$archive_name" "$archive_path"
+        else
+            log "Reusing cached Node archive $archive_name"
+        fi
     fi
 
     if [ ! -x "$extracted_dir/bin/node" ] || [ ! -x "$extracted_dir/bin/npm" ]; then

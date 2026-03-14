@@ -12,10 +12,13 @@ export_env_vars_from_file() {
 }
 
 ENV_VARS_FILE="/kaggle/working/kaggle_env_vars.txt"
+STATE_DIR="/kaggle/working/.kaggle_remote_zrok"
 AUTH_KEYS_URL="${1:-}"
 AUTHORIZED_KEYS_FILE="/kaggle/working/.ssh/authorized_keys"
 SSHD_DROPIN_FILE="/etc/ssh/sshd_config.d/kaggle_remote.conf"
 BASH_RC="$HOME/.bashrc"
+APT_CACHE_DIR="$STATE_DIR/apt-archives"
+APT_SOURCE_DIR="/var/cache/apt/archives"
 
 if [ -f "$ENV_VARS_FILE" ]; then
     echo "Exporting environment variables from $ENV_VARS_FILE"
@@ -64,6 +67,51 @@ setup_ssh_directory() {
     fi
 }
 
+cache_ssh_packages() {
+    mkdir -p "$APT_CACHE_DIR"
+    shopt -s nullglob
+    for package_file in \
+        "$APT_SOURCE_DIR"/libwrap0_*.deb \
+        "$APT_SOURCE_DIR"/ncurses-term_*.deb \
+        "$APT_SOURCE_DIR"/openssh-client_*.deb \
+        "$APT_SOURCE_DIR"/openssh-server_*.deb \
+        "$APT_SOURCE_DIR"/openssh-sftp-server_*.deb \
+        "$APT_SOURCE_DIR"/runit-helper_*.deb \
+        "$APT_SOURCE_DIR"/ssh-import-id_*.deb; do
+        cp -f "$package_file" "$APT_CACHE_DIR"/
+    done
+    shopt -u nullglob
+}
+
+has_cached_ssh_packages() {
+    compgen -G "$APT_CACHE_DIR/openssh-server_*.deb" >/dev/null &&
+    compgen -G "$APT_CACHE_DIR/openssh-client_*.deb" >/dev/null &&
+    compgen -G "$APT_CACHE_DIR/openssh-sftp-server_*.deb" >/dev/null
+}
+
+install_cached_ssh_packages() {
+    if ! has_cached_ssh_packages; then
+        return 1
+    fi
+
+    echo "Installing openssh-server from cached packages in $APT_CACHE_DIR..."
+    shopt -s nullglob
+    local packages=("$APT_CACHE_DIR"/*.deb)
+    if [ "${#packages[@]}" -eq 0 ]; then
+        shopt -u nullglob
+        return 1
+    fi
+
+    if DEBIAN_FRONTEND=noninteractive sudo dpkg -i "${packages[@]}"; then
+        shopt -u nullglob
+        return 0
+    fi
+
+    shopt -u nullglob
+    echo "Cached package install failed; falling back to network install"
+    return 1
+}
+
 configure_sshd() {
     mkdir -p /var/run/sshd
     mkdir -p /etc/ssh/sshd_config.d
@@ -96,12 +144,19 @@ configure_sshd() {
 install_packages() {
     if command -v sshd >/dev/null 2>&1; then
         echo "openssh-server already available; skipping install"
+        cache_ssh_packages
+        return
+    fi
+
+    if install_cached_ssh_packages; then
+        cache_ssh_packages
         return
     fi
 
     echo "Installing openssh-server..."
-    sudo apt-get update
-    sudo apt-get install -y openssh-server
+    DEBIAN_FRONTEND=noninteractive sudo apt-get update
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y openssh-server
+    cache_ssh_packages
 }
 
 start_ssh_service() {
