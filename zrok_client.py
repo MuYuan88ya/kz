@@ -51,9 +51,6 @@ def wait_for_local_ssh_banner(port: int, timeout: int = DEFAULT_ACCESS_READY_TIM
     last_error = None
 
     while time.time() < deadline:
-        if process is not None and process.poll() is not None:
-            return False, f"local zrok access exited with code {process.returncode}"
-
         try:
             with socket.create_connection((DEFAULT_LOCAL_SSH_HOST, port), timeout=3) as conn:
                 conn.settimeout(3)
@@ -109,9 +106,6 @@ def wait_for_ssh_ready(
     attempt = 0
 
     while time.time() < deadline:
-        if process is not None and process.poll() is not None:
-            return False, f"local zrok access exited with code {process.returncode}"
-
         attempt += 1
         result = subprocess.run(
             [
@@ -156,11 +150,11 @@ def start_local_access_tunnel(zrok_cli: str, share_token: str, log_path: Path):
 
     creationflags = 0
     if os.name == "nt":
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0)
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
         process = subprocess.Popen(
-            [zrok_cli, "access", "private", share_token, "--headless"],
+            [zrok_cli, "access", "private", share_token],
             stdout=log_file,
             stderr=subprocess.STDOUT,
             creationflags=creationflags,
@@ -369,7 +363,7 @@ def main(args):
 
     try:
         for attempt in range(1, DEFAULT_ACCESS_RESTARTS + 2):
-            print(f"{zrok.cli} access private {share_token} --headless")
+            print(f"{zrok.cli} access private {share_token}")
             access_process = start_local_access_tunnel(zrok.cli, share_token, access_log_path)
 
             banner_ready, banner_message = wait_for_local_ssh_banner(
