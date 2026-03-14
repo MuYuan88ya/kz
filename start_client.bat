@@ -122,6 +122,4 @@ if not "%EXIT_CODE%"=="0" (
     exit /b %EXIT_CODE%
 )
 
-echo.
-echo Client startup finished.
-pause
+exit /b 0

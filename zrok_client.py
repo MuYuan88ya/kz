@@ -217,12 +217,14 @@ def update_vscode_remote_extensions():
             merged.append(extension)
 
     settings["remote.SSH.defaultExtensions"] = merged
+    settings["terminal.integrated.gpuAcceleration"] = "on"
 
     with open(settings_path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
 
     print("VS Code remote extension defaults updated")
+    print('VS Code setting "terminal.integrated.gpuAcceleration" set to "on"')
 
 
 def sync_codex_auth(host: str):
@@ -424,8 +426,7 @@ def main(args):
                 shell=True,
                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
             )
-            print("VS Code launched. Please wait for the connection to establish...")
-            time.sleep(5)  # Give some time for VS Code to start
+            print("VS Code launched. Closing client terminal.")
     except Exception:
         stop_process(access_process, "local zrok access tunnel")
         raise
