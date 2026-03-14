@@ -17,6 +17,15 @@ DEFAULT_REMOTE_EXTENSIONS = [
     "openai.chatgpt",
 ]
 
+DEFAULT_SSH_LOW_LATENCY_OPTIONS = [
+    "    ServerAliveInterval 15",
+    "    ServerAliveCountMax 3",
+    "    TCPKeepAlive yes",
+    "    IPQoS lowdelay throughput",
+    "    Compression no",
+    "    LogLevel ERROR",
+]
+
 
 def wait_for_local_access(port: int, timeout: int = 15):
     deadline = time.time() + timeout
@@ -203,6 +212,7 @@ def main(args):
         "    StrictHostKeyChecking no",
         "    UserKnownHostsFile /dev/null",
     ])
+    entry_lines.extend(DEFAULT_SSH_LOW_LATENCY_OPTIONS)
     entry = "\n".join(entry_lines)
 
     host_pattern = re.compile(
@@ -257,6 +267,10 @@ def main(args):
 
     if not wait_for_ssh_ready(args.name, timeout=20):
         raise Exception(f"Timed out waiting for SSH login on host {args.name}")
+
+    print("SSH low-latency options applied:")
+    for option_line in DEFAULT_SSH_LOW_LATENCY_OPTIONS:
+        print(option_line.strip())
 
     sync_codex_auth(args.name)
     update_vscode_remote_extensions()

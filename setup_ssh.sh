@@ -17,6 +17,8 @@ AUTH_KEYS_URL="${1:-}"
 AUTHORIZED_KEYS_FILE="/kaggle/working/.ssh/authorized_keys"
 SSHD_DROPIN_FILE="/etc/ssh/sshd_config.d/kaggle_remote.conf"
 BASH_RC="$HOME/.bashrc"
+SHELL_ENV_SNIPPET="$STATE_DIR/shell-env.sh"
+HUSHLOGIN_FILE="$HOME/.hushlogin"
 APT_CACHE_DIR="$STATE_DIR/apt-archives"
 APT_DOWNLOAD_DIR="$APT_CACHE_DIR/downloads"
 
@@ -31,20 +33,23 @@ else
 fi
 
 setup_cuda_environment() {
-    if grep -Fq '# kaggle-remote-zrok cuda env' "$BASH_RC" 2>/dev/null; then
-        echo "CUDA environment variables already configured in $BASH_RC"
-        return
-    fi
-
-    cat >>"$BASH_RC" <<'EOF'
-
-# kaggle-remote-zrok cuda env
+    cat >"$SHELL_ENV_SNIPPET" <<'EOF'
+# kaggle-remote-zrok shell env
 export CUDA_HOME=/usr/local/cuda
 export PATH=/usr/local/cuda/bin:/opt/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
 EOF
 
-    echo "CUDA environment variables set successfully"
+    if ! grep -Fq "$SHELL_ENV_SNIPPET" "$BASH_RC" 2>/dev/null; then
+        cat >>"$BASH_RC" <<EOF
+
+# kaggle-remote-zrok shell env
+[ -f "$SHELL_ENV_SNIPPET" ] && . "$SHELL_ENV_SNIPPET"
+EOF
+    fi
+
+    touch "$HUSHLOGIN_FILE"
+    echo "Lightweight shell environment configured via $SHELL_ENV_SNIPPET"
 }
 
 setup_ssh_directory() {
@@ -135,16 +140,21 @@ configure_sshd() {
         echo "X11DisplayOffset 10"
         echo "IgnoreRhosts yes"
         echo "HostbasedAuthentication no"
-        echo "PrintLastLog yes"
+        echo "PrintLastLog no"
         echo "ChallengeResponseAuthentication no"
+        echo "UseDNS no"
+        echo "GSSAPIAuthentication no"
         echo "UsePAM yes"
         echo "AcceptEnv LANG LC_*"
         echo "AllowTcpForwarding yes"
         echo "GatewayPorts yes"
         echo "PermitTunnel yes"
-        echo "ClientAliveInterval 60"
-        echo "ClientAliveCountMax 2"
+        echo "LoginGraceTime 30"
+        echo "MaxStartups 10:30:100"
+        echo "ClientAliveInterval 30"
+        echo "ClientAliveCountMax 3"
     } >"$SSHD_DROPIN_FILE"
+    echo "Applied SSH low-latency settings in $SSHD_DROPIN_FILE"
 }
 
 install_packages() {
