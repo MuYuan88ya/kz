@@ -12,6 +12,8 @@ NODE_PLATFORM="${NODE_PLATFORM:-linux-x64}"
 LOG_FILE="$STATE_DIR/devtools.log"
 WATCH_SCRIPT="$STATE_DIR/install_vscode_extensions.sh"
 WATCH_PID_FILE="$STATE_DIR/install_vscode_extensions.pid"
+PERSISTENT_VSCODE_SERVER_DIR="$STATE_DIR/vscode-server"
+LIVE_VSCODE_SERVER_DIR="$HOME/.vscode-server"
 SHELL_RC="$HOME/.bashrc"
 PROFILE_FILE="$HOME/.profile"
 PROFILE_SNIPPET="$STATE_DIR/devtools-path.sh"
@@ -29,8 +31,32 @@ log() {
 }
 
 ensure_state_dir() {
-    mkdir -p "$STATE_DIR" "$NPM_PREFIX" "$NPM_CACHE_DIR" "$NODE_RUNTIME_DIR"
+    mkdir -p "$STATE_DIR" "$NPM_PREFIX" "$NPM_CACHE_DIR" "$NODE_RUNTIME_DIR" "$PERSISTENT_VSCODE_SERVER_DIR"
     touch "$LOG_FILE"
+}
+
+ensure_persistent_vscode_server() {
+    mkdir -p "$PERSISTENT_VSCODE_SERVER_DIR"
+
+    if [ -L "$LIVE_VSCODE_SERVER_DIR" ]; then
+        target="$(readlink "$LIVE_VSCODE_SERVER_DIR" || true)"
+        if [ "$target" = "$PERSISTENT_VSCODE_SERVER_DIR" ]; then
+            log "Using persistent VS Code server symlink at $LIVE_VSCODE_SERVER_DIR"
+            return
+        fi
+        rm -f "$LIVE_VSCODE_SERVER_DIR"
+    elif [ -d "$LIVE_VSCODE_SERVER_DIR" ]; then
+        if find "$LIVE_VSCODE_SERVER_DIR" -mindepth 1 -print -quit >/dev/null 2>&1; then
+            log "Copying existing VS Code server state into $PERSISTENT_VSCODE_SERVER_DIR"
+            cp -a "$LIVE_VSCODE_SERVER_DIR"/. "$PERSISTENT_VSCODE_SERVER_DIR"/
+        fi
+        rm -rf "$LIVE_VSCODE_SERVER_DIR"
+    elif [ -e "$LIVE_VSCODE_SERVER_DIR" ]; then
+        rm -rf "$LIVE_VSCODE_SERVER_DIR"
+    fi
+
+    ln -s "$PERSISTENT_VSCODE_SERVER_DIR" "$LIVE_VSCODE_SERVER_DIR"
+    log "Persistent VS Code server directory linked: $LIVE_VSCODE_SERVER_DIR -> $PERSISTENT_VSCODE_SERVER_DIR"
 }
 
 find_cached_node_dir() {
@@ -359,6 +385,7 @@ show_summary() {
 
 main() {
     ensure_state_dir
+    ensure_persistent_vscode_server
     ensure_node_and_npm
     ensure_persistent_npm_prefix
     ensure_codex_cli
