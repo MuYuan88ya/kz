@@ -218,6 +218,27 @@ def main(args):
     if not share_token:
         raise Exception(f"SSH tunnel not found in {args.server_name}. Is the notebook running?")
 
+    # 1.5 Clean up any orphaned process holding port 9191
+    if os.name == "nt":
+        # Windows: Find PID listening on 127.0.0.1:9191 and kill it
+        try:
+            netstat = subprocess.check_output("netstat -ano", shell=True, text=True)
+            for line in netstat.splitlines():
+                if "127.0.0.1:9191" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        print(f"Killing orphaned process (PID {pid}) holding port 9191...")
+                        subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"Warning: Could not check/kill orphaned port 9191 process: {e}")
+    else:
+        # Linux/macOS: Find and kill process using lsof
+        try:
+            subprocess.run("lsof -ti:9191 | xargs kill -9", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
     # 2. Start zrok access
     print(f"{zrok.cli} access private {share_token}")
     subprocess.Popen(
