@@ -13,10 +13,11 @@ from utils import Zrok
 DEFAULT_LOCAL_SSH_HOST = "127.0.0.1"
 DEFAULT_LOCAL_SSH_PORT = 9191
 DEFAULT_ACCESS_READY_TIMEOUT = 45
-DEFAULT_SSH_READY_TIMEOUT = 90
-DEFAULT_SSH_POLL_INTERVAL = 3
-DEFAULT_ACCESS_RESTARTS = 1
-DEFAULT_ACCESS_RESTART_DELAY = 3
+DEFAULT_SSH_READY_TIMEOUT = 120
+DEFAULT_SSH_POLL_INTERVAL = 2
+DEFAULT_BANNER_READY_TIMEOUT = 30
+DEFAULT_SHARE_LOOKUP_TIMEOUT = 90
+DEFAULT_SHARE_LOOKUP_POLL_INTERVAL = 3
 
 
 DEFAULT_REMOTE_EXTENSIONS = [
@@ -46,29 +47,6 @@ def wait_for_local_access(port: int, timeout: int = DEFAULT_ACCESS_READY_TIMEOUT
     return False
 
 
-def wait_for_local_ssh_banner(port: int, timeout: int = DEFAULT_ACCESS_READY_TIMEOUT, process=None):
-    deadline = time.time() + timeout
-    last_error = None
-
-    while time.time() < deadline:
-        try:
-            with socket.create_connection((DEFAULT_LOCAL_SSH_HOST, port), timeout=3) as conn:
-                conn.settimeout(3)
-                banner = conn.recv(128).decode("utf-8", errors="ignore").strip()
-                if banner.startswith("SSH-"):
-                    return True, banner
-                if banner:
-                    last_error = f"unexpected banner from localhost:{port}: {banner!r}"
-                else:
-                    last_error = f"localhost:{port} accepted a connection without an SSH banner"
-        except OSError as exc:
-            last_error = str(exc)
-
-        time.sleep(2)
-
-    return False, last_error or f"timed out waiting for SSH banner on localhost:{port}"
-
-
 def resolve_ssh_executable():
     resolved = shutil.which("ssh")
     if resolved:
@@ -93,6 +71,39 @@ def resolve_scp_executable():
     return "scp"
 
 
+def has_local_identity_file() -> bool:
+    return (Path(os.environ["USERPROFILE"]) / ".ssh" / "kaggle_rsa").exists()
+
+
+def wait_for_remote_ssh_banner(port: int, timeout: int = DEFAULT_BANNER_READY_TIMEOUT):
+    deadline = time.time() + timeout
+    attempt = 0
+    last_error = None
+
+    print(f"Waiting for remote SSH banner through localhost:{port}...")
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            with socket.create_connection((DEFAULT_LOCAL_SSH_HOST, port), timeout=5) as conn:
+                conn.settimeout(5)
+                banner = conn.recv(256).decode("utf-8", errors="ignore").strip()
+                if banner.startswith("SSH-"):
+                    print(f"Remote SSH banner detected: {banner}")
+                    return True, banner
+                last_error = f"unexpected banner: {banner!r}" if banner else "empty SSH banner"
+        except OSError as exc:
+            last_error = str(exc)
+
+        remaining = max(0, int(deadline - time.time()))
+        print(
+            f"SSH banner probe {attempt} not ready yet; retrying for up to {remaining}s. "
+            f"Last error: {last_error}"
+        )
+        time.sleep(2)
+
+    return False, last_error or f"timed out waiting for SSH banner on localhost:{port}"
+
+
 def wait_for_ssh_ready(
     host: str,
     timeout: int = DEFAULT_SSH_READY_TIMEOUT,
@@ -102,9 +113,9 @@ def wait_for_ssh_ready(
     ssh_exe = resolve_ssh_executable()
     deadline = time.time() + timeout
     last_error = None
-    last_reported_error = None
     attempt = 0
 
+    print(f"Waiting for SSH login on host {host}...")
     while time.time() < deadline:
         attempt += 1
         result = subprocess.run(
@@ -113,7 +124,17 @@ def wait_for_ssh_ready(
                 "-o",
                 "BatchMode=yes",
                 "-o",
-                "ConnectTimeout=10",
+                "PreferredAuthentications=publickey",
+                "-o",
+                "PubkeyAuthentication=yes",
+                "-o",
+                "PasswordAuthentication=no",
+                "-o",
+                "KbdInteractiveAuthentication=no",
+                "-o",
+                "GSSAPIAuthentication=no",
+                "-o",
+                "ConnectTimeout=5",
                 "-o",
                 "ConnectionAttempts=1",
                 host,
@@ -123,18 +144,17 @@ def wait_for_ssh_ready(
             text=True,
         )
         if result.returncode == 0:
+            print(f"SSH login confirmed on host {host}")
             return True, None
 
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         last_error = stderr or stdout or f"ssh exited with code {result.returncode}"
-        if last_error != last_reported_error:
-            remaining = max(0, int(deadline - time.time()))
-            print(
-                f"SSH probe {attempt} not ready yet; retrying for up to {remaining}s. "
-                f"Last error: {last_error}"
-            )
-            last_reported_error = last_error
+        remaining = max(0, int(deadline - time.time()))
+        print(
+            f"SSH auth probe {attempt} not ready yet; retrying for up to {remaining}s. "
+            f"Last error: {last_error}"
+        )
 
         time.sleep(poll_interval)
 
@@ -143,6 +163,126 @@ def wait_for_ssh_ready(
 
 def get_client_state_dir() -> Path:
     return Path(os.environ["USERPROFILE"]) / ".kaggle_remote_zrok"
+
+
+def lookup_share_token(zrok: Zrok, server_name: str, port: int):
+    env = zrok.find_env(server_name)
+    if env is None:
+        return None
+
+    share = Zrok.find_share(env, f"localhost:{port}", backend_mode="tcpTunnel")
+    if share is None:
+        return None
+    return share.get("shareToken")
+
+
+def wait_for_share_token(zrok: Zrok, server_name: str, port: int, previous_token: str | None = None):
+    deadline = time.time() + DEFAULT_SHARE_LOOKUP_TIMEOUT
+    attempt = 0
+    last_status = None
+
+    print(f"Looking up zrok environment {server_name}...")
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            share_token = lookup_share_token(zrok, server_name, port)
+        except Exception as exc:
+            last_status = str(exc)
+            share_token = None
+        else:
+            last_status = f"share for localhost:{port} not published yet"
+
+        if share_token:
+            if previous_token and share_token == previous_token:
+                last_status = f"server is still advertising stale share token {share_token}"
+            else:
+                print(f"Using share token {share_token}")
+                return share_token
+
+        remaining = max(0, int(deadline - time.time()))
+        print(
+            f"Share lookup {attempt} not ready yet; retrying for up to {remaining}s. "
+            f"Last status: {last_status}"
+        )
+        time.sleep(DEFAULT_SHARE_LOOKUP_POLL_INTERVAL)
+
+    if previous_token:
+        raise Exception(
+            f"{server_name} is still advertising stale share token {previous_token}. "
+            f"Please rerun the notebook-side start command so it publishes a fresh share."
+        )
+
+    raise Exception(
+        f"{server_name} share for localhost:{port} not found after waiting. "
+        f"Is the notebook still running?"
+    )
+
+
+def read_log_tail(log_path: Path, line_count: int = 40):
+    if not log_path.exists():
+        return ""
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+    except OSError:
+        return ""
+
+    return "".join(lines[-line_count:])
+
+
+def find_local_listener_pids(port: int):
+    result = subprocess.run(
+        ["netstat", "-ano", "-p", "tcp"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+
+    pids = set()
+    port_suffix = f":{port}"
+    for line in result.stdout.splitlines():
+        columns = line.split()
+        if len(columns) < 5 or columns[0].upper() != "TCP":
+            continue
+
+        local_address = columns[1]
+        state = columns[3].upper()
+        pid = columns[4]
+        if not local_address.endswith(port_suffix):
+            continue
+        if state != "LISTENING":
+            continue
+        if pid.isdigit():
+            pids.add(int(pid))
+
+    return sorted(pids)
+
+
+def kill_local_listener_pids(port: int):
+    pids = find_local_listener_pids(port)
+    if not pids:
+        return
+
+    print(f"Cleaning up stale local listeners on localhost:{port}: {', '.join(str(pid) for pid in pids)}")
+    for pid in pids:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not find_local_listener_pids(port):
+            return
+        time.sleep(1)
+
+    remaining = ", ".join(str(pid) for pid in find_local_listener_pids(port))
+    raise Exception(f"Failed to clear localhost:{port}; remaining listener PIDs: {remaining}")
 
 
 def start_local_access_tunnel(zrok_cli: str, share_token: str, log_path: Path):
@@ -176,6 +316,44 @@ def stop_process(process, label: str):
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+def ensure_local_access_ready(host_alias: str, port: int, access_process):
+    deadline = time.time() + DEFAULT_ACCESS_READY_TIMEOUT
+    print(f"Waiting for local zrok access on {DEFAULT_LOCAL_SSH_HOST}:{port}...")
+    while time.time() < deadline:
+        if wait_for_local_access(port, timeout=1):
+            print(f"Local tunnel is listening on localhost:{port}")
+            banner_ready, banner_error = wait_for_remote_ssh_banner(port)
+            if not banner_ready:
+                raise Exception(
+                    f"Timed out waiting for remote SSH banner on localhost:{port}. "
+                    f"Last error: {banner_error}"
+                )
+            if has_local_identity_file():
+                ssh_ready, ssh_error = wait_for_ssh_ready(
+                    host_alias,
+                    timeout=DEFAULT_SSH_READY_TIMEOUT,
+                    poll_interval=DEFAULT_SSH_POLL_INTERVAL,
+                    process=access_process,
+                )
+                if not ssh_ready:
+                    raise Exception(
+                        f"Timed out waiting for SSH login on host {host_alias}. "
+                        f"Last error: {ssh_error}"
+                    )
+            else:
+                print("No local SSH key detected; skipping non-interactive SSH login probe.")
+            return
+
+        if access_process is not None and access_process.poll() is not None:
+            raise RuntimeError(
+                f"local zrok access exited with code {access_process.returncode}"
+            )
+
+        time.sleep(1)
+
+    raise TimeoutError(f"Timed out waiting for local zrok access on {DEFAULT_LOCAL_SSH_HOST}:{port}")
 
 
 def update_vscode_remote_extensions():
@@ -226,22 +404,28 @@ def sync_codex_auth(host: str):
     if not local_auth.exists():
         print(f"Local Codex auth not found at {local_auth}; skipping remote sync")
         return
+    if not has_local_identity_file():
+        print("Local SSH key not found; skipping remote Codex auth sync")
+        return
 
     ssh_exe = resolve_ssh_executable()
     scp_exe = resolve_scp_executable()
 
+    print("Syncing Codex auth to remote host...")
     mkdir_result = subprocess.run(
-        [ssh_exe, host, "mkdir", "-p", "/root/.codex"],
+        [ssh_exe, "-o", "ConnectTimeout=10", host, "mkdir", "-p", "/root/.codex"],
         capture_output=True,
         text=True,
+        timeout=20,
     )
     if mkdir_result.returncode != 0:
         raise Exception(f"Failed to create /root/.codex on remote host {host}")
 
     copy_result = subprocess.run(
-        [scp_exe, str(local_auth), f"{host}:/root/.codex/auth.json"],
+        [scp_exe, "-o", "ConnectTimeout=10", str(local_auth), f"{host}:/root/.codex/auth.json"],
         capture_output=True,
         text=True,
+        timeout=20,
     )
     if copy_result.returncode != 0:
         raise Exception(f"Failed to copy Codex auth.json to remote host {host}")
@@ -251,32 +435,22 @@ def sync_codex_auth(host: str):
 
 def main(args):
     zrok = Zrok(args.token, args.name)
+    kill_local_listener_pids(DEFAULT_LOCAL_SSH_PORT)
     
     if not Zrok.is_installed():
         Zrok.install()
         zrok.cli = Zrok.resolve_executable()
 
-    zrok.disable()
-    zrok.enable()
+    zrok.ensure_enabled()
 
     # 1. Get zrok share token
-    env = zrok.find_env(args.server_name)
-    if env is None:
-        raise Exception(f"{args.server_name} environment not found. Are you running the notebook?")
-
-    share_token = None
-    for share in reversed(env.get("shares", [])):
-        if (share.get("backendMode") == "tcpTunnel" and
-            share.get("backendProxyEndpoint") == f"localhost:{args.port}"):
-            share_token = share.get("shareToken")
-            break
-
-    if not share_token:
-        raise Exception(f"SSH tunnel not found in {args.server_name} environment. Are you running the notebook?")
+    share_token = wait_for_share_token(zrok, args.server_name, args.port)
 
     access_log_path = get_client_state_dir() / f"{args.name}-access.log"
+    access_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(access_log_path, "w", encoding="utf-8", newline="\n"):
+        pass
     access_process = None
-    startup_succeeded = False
 
     # 4. Update SSH config
     config_path = os.path.join(os.environ['USERPROFILE'], '.ssh', 'config')
@@ -362,48 +536,58 @@ def main(args):
         )
 
     try:
-        for attempt in range(1, DEFAULT_ACCESS_RESTARTS + 2):
+        for attempt in range(1, 4):
             print(f"{zrok.cli} access private {share_token}")
             access_process = start_local_access_tunnel(zrok.cli, share_token, access_log_path)
+            try:
+                ensure_local_access_ready(args.name, DEFAULT_LOCAL_SSH_PORT, access_process)
+                break
+            except (RuntimeError, TimeoutError) as error:
+                log_tail = read_log_tail(access_log_path).lower()
+                stop_process(access_process, "local zrok access tunnel")
+                access_process = None
 
-            banner_ready, banner_message = wait_for_local_ssh_banner(
-                DEFAULT_LOCAL_SSH_PORT,
-                timeout=DEFAULT_ACCESS_READY_TIMEOUT,
-                process=access_process,
-            )
-            if not banner_ready:
-                print(f"Local tunnel is not serving SSH yet: {banner_message}")
-            else:
-                print(f"Local tunnel ready on localhost:{DEFAULT_LOCAL_SSH_PORT} ({banner_message})")
-                ssh_ready, ssh_error = wait_for_ssh_ready(
-                    args.name,
-                    timeout=DEFAULT_SSH_READY_TIMEOUT,
-                    process=access_process,
+                should_rebuild_identity = (
+                    attempt == 1 and
+                    ("accessunauthorized" in log_tail or "invalid_auth" in log_tail)
                 )
-                if ssh_ready:
-                    startup_succeeded = True
-                    break
-                print(f"SSH login still not ready on attempt {attempt}: {ssh_error}")
-
-            if attempt > DEFAULT_ACCESS_RESTARTS:
-                raise Exception(
-                    f"Timed out waiting for SSH login on host {args.name}. "
-                    f"See local access log: {access_log_path}"
+                should_refresh_share = (
+                    "accessnotfound" in log_tail or
+                    "service not found" in log_tail
                 )
+                should_retry_access = any(
+                    marker in log_tail
+                    for marker in [
+                        "client version error",
+                        "tls handshake timeout",
+                        "unexpected_eof",
+                        "ssl",
+                        "timeout",
+                        "eof",
+                    ]
+                )
+                if not should_rebuild_identity:
+                    if should_retry_access and attempt < 3:
+                        print("Local zrok access hit a transient network error; retrying...")
+                        time.sleep(2)
+                        continue
+                    if not should_refresh_share or attempt >= 3:
+                        raise Exception(
+                            f"{error}. See local access log: {access_log_path}"
+                        ) from error
 
-            stop_process(access_process, "local zrok access tunnel")
-            access_process = None
-            print(
-                f"Restarting local zrok access tunnel in {DEFAULT_ACCESS_RESTART_DELAY}s "
-                f"and retrying SSH readiness..."
-            )
-            time.sleep(DEFAULT_ACCESS_RESTART_DELAY)
+                    print("Share token is no longer valid; waiting for the notebook to publish a fresh share token...")
+                    share_token = wait_for_share_token(
+                        zrok,
+                        args.server_name,
+                        args.port,
+                        previous_token=share_token,
+                    )
+                    continue
 
-        if not startup_succeeded:
-            raise Exception(
-                f"Failed to establish SSH on host {args.name}. "
-                f"See local access log: {access_log_path}"
-            )
+                print("Local zrok identity cannot access the current share; rebuilding identity and retrying once...")
+                zrok.rebuild_local_identity()
+                share_token = wait_for_share_token(zrok, args.server_name, args.port)
 
         print("SSH low-latency options applied:")
         for option_line in DEFAULT_SSH_LOW_LATENCY_OPTIONS:

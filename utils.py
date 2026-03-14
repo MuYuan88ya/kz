@@ -7,10 +7,15 @@ import subprocess
 import platform
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 class Zrok:
     DEFAULT_LINUX_CACHE_DIR = Path("/kaggle/working/.kaggle_remote_zrok/bin")
+    ENABLE_RETRIES = 3
+    ENABLE_RETRY_DELAY = 2
+    OVERVIEW_RETRIES = 5
+    OVERVIEW_RETRY_DELAY = 2
 
     def __init__(self, token: str, name: str = None):
         """Initialize Zrok instance with API token and optional environment name.
@@ -88,6 +93,24 @@ class Zrok:
         except (subprocess.CalledProcessError, FileNotFoundError, PermissionError):
             return False
 
+    @staticmethod
+    def _is_transient_error_text(error_text: str) -> bool:
+        lowered = error_text.lower()
+        return any(
+            marker in lowered
+            for marker in [
+                "eof",
+                "unexpected_eof",
+                "ssl",
+                "timeout",
+                "timed out",
+                "clientversioncheck",
+                "temporarily unavailable",
+                "connection reset",
+                "connection aborted",
+            ]
+        )
+
     def get_env(self):
         """Get overview of all zrok environments using HTTP API.
 
@@ -97,31 +120,48 @@ class Zrok:
             dict: Overview data containing environments information
             None: If the API call fails or no environments exist
         """
-        try:
-            result = subprocess.run(
-                [self.cli, "overview"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            data = json.loads(result.stdout)
-            return data["environments"]
-        except Exception:
-            req = urllib.request.Request(
-                url=f"{self.base_url}/overview",
-                headers={"x-token": self.token},
-            )
+        last_error = None
+        for attempt in range(1, self.OVERVIEW_RETRIES + 1):
+            try:
+                result = subprocess.run(
+                    [self.cli, "overview"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                data = json.loads(result.stdout)
+                return data["environments"]
+            except Exception as cli_error:
+                last_error = cli_error
 
-            with urllib.request.urlopen(req) as response:
-                status = response.getcode()
-                data = response.read().decode('utf-8')
-                data = json.loads(data)
+            try:
+                req = urllib.request.Request(
+                    url=f"{self.base_url}/overview",
+                    headers={"x-token": self.token},
+                )
 
-            if status != 200:
-                print(f"Error: {status}")
-                raise Exception("zrok API overview error")
-            
-            return data['environments']
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    status = response.getcode()
+                    data = response.read().decode("utf-8")
+                    data = json.loads(data)
+
+                if status != 200:
+                    raise Exception(f"zrok API overview error: {status}")
+
+                return data["environments"]
+            except Exception as api_error:
+                last_error = api_error
+                error_text = str(api_error)
+                if attempt == self.OVERVIEW_RETRIES or not self._is_transient_error_text(error_text):
+                    raise
+                print(
+                    f"zrok overview lookup failed with a transient error; retrying in "
+                    f"{self.OVERVIEW_RETRY_DELAY}s ({attempt}/{self.OVERVIEW_RETRIES})..."
+                )
+                time.sleep(self.OVERVIEW_RETRY_DELAY)
+
+        if last_error is not None:
+            raise last_error
 
     def find_env(self, name: str):
         """Find a specific environment by its name.
@@ -146,11 +186,40 @@ class Zrok:
         if not matches:
             return None
 
-        shareful_matches = [item for item in matches if item.get("shares")]
-        if shareful_matches:
-            return shareful_matches[-1]
-            
+        def env_sort_key(item):
+            env = item.get("environment", {})
+            return (
+                env.get("updatedAt", 0),
+                env.get("createdAt", 0),
+                env.get("zId", ""),
+            )
+
+        matches.sort(key=env_sort_key)
         return matches[-1]
+
+    @staticmethod
+    def find_share(env: dict, backend_proxy_endpoint: str, backend_mode: str = "tcpTunnel"):
+        shares = list(env.get("shares", []))
+        if not shares:
+            return None
+
+        def share_sort_key(share):
+            return (
+                share.get("updatedAt", 0),
+                share.get("createdAt", 0),
+                share.get("zId", ""),
+            )
+
+        matching = [
+            share for share in shares
+            if share.get("backendMode") == backend_mode and
+            share.get("backendProxyEndpoint") == backend_proxy_endpoint
+        ]
+        if not matching:
+            return None
+
+        matching.sort(key=share_sort_key)
+        return matching[-1]
 
     def delete_environment(self, zId: str):
         """Delete a zrok environment by its ID.
@@ -181,6 +250,39 @@ class Zrok:
 
         return True
 
+    @staticmethod
+    def _command_error_text(error: subprocess.CalledProcessError):
+        parts = []
+        stdout = getattr(error, "stdout", None)
+        stderr = getattr(error, "stderr", None)
+        if stdout:
+            parts.append(stdout.strip())
+        if stderr:
+            parts.append(stderr.strip())
+        if not parts:
+            parts.append(str(error))
+        return "\n".join(part for part in parts if part)
+
+    @staticmethod
+    def local_state_dir():
+        return Path.home() / ".zrok"
+
+    def reset_local_identity(self):
+        state_dir = self.local_state_dir()
+        if not state_dir.exists():
+            return
+
+        for path in [state_dir / "environment.json", state_dir / "metadata.json"]:
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
+        identities_dir = state_dir / "identities"
+        if identities_dir.exists():
+            shutil.rmtree(identities_dir, ignore_errors=True)
+
     def enable(self, name: str = None):
         """Enable zrok with the specified environment name.
         
@@ -197,8 +299,61 @@ class Zrok:
         env_name = name if name is not None else self.name
         if env_name is None:
             raise ValueError("Environment name must be provided either during initialization or when calling enable()")
-        
-        subprocess.run([self.cli, "enable", self.token, "-d", env_name], check=True)
+
+        last_error = None
+        for attempt in range(1, self.ENABLE_RETRIES + 1):
+            try:
+                subprocess.run(
+                    [self.cli, "enable", self.token, "-d", env_name],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                error_text = self._command_error_text(error).lower()
+                is_transient = any(
+                    marker in error_text
+                    for marker in ["eof", "clientversioncheck", "ssl", "unexpected_eof", "timeout"]
+                )
+                if not is_transient or attempt == self.ENABLE_RETRIES:
+                    raise
+                print(
+                    f"zrok enable failed with a transient error; retrying in {self.ENABLE_RETRY_DELAY}s "
+                    f"({attempt}/{self.ENABLE_RETRIES})..."
+                )
+                time.sleep(self.ENABLE_RETRY_DELAY)
+
+        if last_error is not None:
+            raise last_error
+
+    def ensure_enabled(self, name: str = None):
+        env_name = name if name is not None else self.name
+        if env_name is None:
+            raise ValueError("Environment name must be provided either during initialization or when calling ensure_enabled()")
+
+        if Zrok.is_enabled():
+            print("zrok is already enabled locally; reusing existing identity")
+            return
+
+        try:
+            self.enable(env_name)
+        except subprocess.CalledProcessError as error:
+            error_text = self._command_error_text(error).lower()
+            if "already have an enabled environment" in error_text:
+                print("zrok already has an enabled local identity; reusing it")
+                return
+            raise
+
+    def rebuild_local_identity(self, name: str = None):
+        env_name = name if name is not None else self.name
+        if env_name is None:
+            raise ValueError("Environment name must be provided either during initialization or when calling rebuild_local_identity()")
+
+        print("Resetting local zrok identity and enabling again...")
+        self.reset_local_identity()
+        self.enable(env_name)
 
     def disable(self, name: str = None):
         """Disable zrok.
@@ -214,10 +369,19 @@ class Zrok:
 
         # Delete the ~/.zrok/environment.json file
         try:
-            subprocess.run([self.cli, "disable"], check=True)
-        except Exception as e:
-            print(e)
-            print("zrok already disable")
+            subprocess.run(
+                [self.cli, "disable"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            error_text = self._command_error_text(error)
+            print(error_text)
+            if "no environment found" in error_text.lower():
+                print("zrok already disable")
+            else:
+                print("local zrok disable failed; continuing")
 
         # Delete environment via HTTP communication even if zrok is not enabled
         try:

@@ -15,6 +15,7 @@ DEFAULT_STATE_DIR = "/kaggle/working/.kaggle_remote_zrok"
 DEFAULT_AUTHORIZED_KEYS_PATH = "/kaggle/working/.ssh/authorized_keys"
 DEFAULT_ENV_VARS_PATH = "/kaggle/working/kaggle_env_vars.txt"
 DEFAULT_DEVTOOLS_LOG_PATH = "/kaggle/working/.kaggle_remote_zrok/devtools-launch.log"
+DEFAULT_SHARE_STATE_PATH = "/kaggle/working/.kaggle_remote_zrok/current_share_token.txt"
 
 
 def generate_random_password(length=16):
@@ -22,17 +23,32 @@ def generate_random_password(length=16):
     return ''.join(random.choices(characters, k=length))
 
 
-def wait_for_share_token(zrok: Zrok, port: int, timeout: int = 20):
+def wait_for_share_token(zrok: Zrok, port: int, timeout: int = 30, previous_token: str | None = None):
     deadline = time.time() + timeout
+    last_status = None
     while time.time() < deadline:
         env = zrok.find_env(zrok.name)
         if env:
-            for share in env.get("shares", []):
-                if (share.get("backendMode") == "tcpTunnel" and
-                    share.get("backendProxyEndpoint") == f"localhost:{port}"):
-                    return share.get("shareToken")
+            share = Zrok.find_share(env, f"localhost:{port}", backend_mode="tcpTunnel")
+            if share:
+                share_token = share.get("shareToken")
+                if previous_token and share_token == previous_token:
+                    last_status = f"share token still unchanged: {share_token}"
+                else:
+                    return share_token
+            else:
+                last_status = f"no tcpTunnel share for localhost:{port} yet"
         time.sleep(1)
+    if last_status:
+        print(f"Share lookup timed out: {last_status}")
     return None
+
+
+def write_share_token(share_token: str):
+    share_state_path = Path(DEFAULT_SHARE_STATE_PATH)
+    share_state_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(share_state_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(share_token.strip() + "\n")
 
 
 def get_state_paths(state_dir: str):
@@ -222,8 +238,15 @@ def main(args):
 
     print(f"Using zrok executable: {zrok.cli}")
 
+    previous_env = zrok.find_env(runtime["name"])
+    previous_share = None
+    if previous_env is not None:
+        previous_share_obj = Zrok.find_share(previous_env, f"localhost:{runtime['port']}", backend_mode="tcpTunnel")
+        if previous_share_obj is not None:
+            previous_share = previous_share_obj.get("shareToken")
+
     zrok.disable()
-    zrok.enable()
+    zrok.rebuild_local_identity()
 
     copy_persisted_authorized_keys(runtime["state_dir"], DEFAULT_AUTHORIZED_KEYS_PATH)
     prepare_kaggle_runtime_files()
@@ -248,11 +271,15 @@ def main(args):
         [zrok.cli, "share", "private", f"localhost:{runtime['port']}", "--backend-mode", "tcpTunnel", "--headless"]
     )
 
-    share_token = wait_for_share_token(zrok, runtime["port"])
+    share_token = wait_for_share_token(zrok, runtime["port"], previous_token=previous_share)
     if share_token:
         print(f"Share token: {share_token}")
+        write_share_token(share_token)
     else:
-        print("Share token not found yet. Check zrok service status and environment overview.")
+        raise RuntimeError(
+            "Share token not found after starting zrok share. "
+            "Check zrok service status and rerun the notebook-side start command."
+        )
 
     print("Private share is running. Keep this process alive while the client is connected.")
     share_process.wait()
