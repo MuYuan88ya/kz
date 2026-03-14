@@ -232,7 +232,7 @@ def main(args):
     # 4. Update SSH config
     update_ssh_config(args.name)
 
-    if not wait_for_ssh_ready(args.name, timeout=20):
+    if not wait_for_ssh_ready(args.name, timeout=60):
         raise Exception(f"Timed out waiting for SSH on {args.name}")
 
     # 5. Post-connect setup
