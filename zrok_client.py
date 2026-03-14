@@ -10,6 +10,14 @@ import shutil
 import json
 from utils import Zrok
 
+DEFAULT_LOCAL_SSH_HOST = "127.0.0.1"
+DEFAULT_LOCAL_SSH_PORT = 9191
+DEFAULT_ACCESS_READY_TIMEOUT = 45
+DEFAULT_SSH_READY_TIMEOUT = 90
+DEFAULT_SSH_POLL_INTERVAL = 3
+DEFAULT_ACCESS_RESTARTS = 1
+DEFAULT_ACCESS_RESTART_DELAY = 3
+
 
 DEFAULT_REMOTE_EXTENSIONS = [
     "ms-python.python",
@@ -27,15 +35,41 @@ DEFAULT_SSH_LOW_LATENCY_OPTIONS = [
 ]
 
 
-def wait_for_local_access(port: int, timeout: int = 15):
+def wait_for_local_access(port: int, timeout: int = DEFAULT_ACCESS_READY_TIMEOUT):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
+            with socket.create_connection((DEFAULT_LOCAL_SSH_HOST, port), timeout=1):
                 return True
         except OSError:
             time.sleep(1)
     return False
+
+
+def wait_for_local_ssh_banner(port: int, timeout: int = DEFAULT_ACCESS_READY_TIMEOUT, process=None):
+    deadline = time.time() + timeout
+    last_error = None
+
+    while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            return False, f"local zrok access exited with code {process.returncode}"
+
+        try:
+            with socket.create_connection((DEFAULT_LOCAL_SSH_HOST, port), timeout=3) as conn:
+                conn.settimeout(3)
+                banner = conn.recv(128).decode("utf-8", errors="ignore").strip()
+                if banner.startswith("SSH-"):
+                    return True, banner
+                if banner:
+                    last_error = f"unexpected banner from localhost:{port}: {banner!r}"
+                else:
+                    last_error = f"localhost:{port} accepted a connection without an SSH banner"
+        except OSError as exc:
+            last_error = str(exc)
+
+        time.sleep(2)
+
+    return False, last_error or f"timed out waiting for SSH banner on localhost:{port}"
 
 
 def resolve_ssh_executable():
@@ -62,19 +96,92 @@ def resolve_scp_executable():
     return "scp"
 
 
-def wait_for_ssh_ready(host: str, timeout: int = 20):
+def wait_for_ssh_ready(
+    host: str,
+    timeout: int = DEFAULT_SSH_READY_TIMEOUT,
+    poll_interval: int = DEFAULT_SSH_POLL_INTERVAL,
+    process=None,
+):
     ssh_exe = resolve_ssh_executable()
     deadline = time.time() + timeout
+    last_error = None
+    last_reported_error = None
+    attempt = 0
+
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            return False, f"local zrok access exited with code {process.returncode}"
+
+        attempt += 1
         result = subprocess.run(
-            [ssh_exe, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "exit"],
+            [
+                ssh_exe,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ConnectionAttempts=1",
+                host,
+                "exit",
+            ],
             capture_output=True,
             text=True,
         )
         if result.returncode == 0:
-            return True
-        time.sleep(1)
-    return False
+            return True, None
+
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        last_error = stderr or stdout or f"ssh exited with code {result.returncode}"
+        if last_error != last_reported_error:
+            remaining = max(0, int(deadline - time.time()))
+            print(
+                f"SSH probe {attempt} not ready yet; retrying for up to {remaining}s. "
+                f"Last error: {last_error}"
+            )
+            last_reported_error = last_error
+
+        time.sleep(poll_interval)
+
+    return False, last_error or f"timed out waiting for SSH login on host {host}"
+
+
+def get_client_state_dir() -> Path:
+    return Path(os.environ["USERPROFILE"]) / ".kaggle_remote_zrok"
+
+
+def start_local_access_tunnel(zrok_cli: str, share_token: str, log_path: Path):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0)
+
+    with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
+        process = subprocess.Popen(
+            [zrok_cli, "access", "private", share_token, "--headless"],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=creationflags,
+        )
+
+    print(f"Started local zrok access tunnel (PID {process.pid})")
+    print(f"Local zrok access log: {log_path}")
+    return process
+
+
+def stop_process(process, label: str):
+    if process is None or process.poll() is not None:
+        return
+
+    print(f"Stopping {label} (PID {process.pid})...")
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def update_vscode_remote_extensions():
@@ -171,16 +278,9 @@ def main(args):
     if not share_token:
         raise Exception(f"SSH tunnel not found in {args.server_name} environment. Are you running the notebook?")
 
-    # 2. Start zrok process
-    print(f"{zrok.cli} access private {share_token}")
-    subprocess.Popen(
-        [zrok.cli, "access", "private", share_token],
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
-
-    # 3. Wait for local zrok access listener
-    if not wait_for_local_access(9191, timeout=15):
-        raise Exception("Timed out waiting for local zrok access on 127.0.0.1:9191")
+    access_log_path = get_client_state_dir() / f"{args.name}-access.log"
+    access_process = None
+    startup_succeeded = False
 
     # 4. Update SSH config
     config_path = os.path.join(os.environ['USERPROFILE'], '.ssh', 'config')
@@ -265,26 +365,70 @@ def main(args):
             text=True,
         )
 
-    if not wait_for_ssh_ready(args.name, timeout=20):
-        raise Exception(f"Timed out waiting for SSH login on host {args.name}")
+    try:
+        for attempt in range(1, DEFAULT_ACCESS_RESTARTS + 2):
+            print(f"{zrok.cli} access private {share_token} --headless")
+            access_process = start_local_access_tunnel(zrok.cli, share_token, access_log_path)
 
-    print("SSH low-latency options applied:")
-    for option_line in DEFAULT_SSH_LOW_LATENCY_OPTIONS:
-        print(option_line.strip())
+            banner_ready, banner_message = wait_for_local_ssh_banner(
+                DEFAULT_LOCAL_SSH_PORT,
+                timeout=DEFAULT_ACCESS_READY_TIMEOUT,
+                process=access_process,
+            )
+            if not banner_ready:
+                print(f"Local tunnel is not serving SSH yet: {banner_message}")
+            else:
+                print(f"Local tunnel ready on localhost:{DEFAULT_LOCAL_SSH_PORT} ({banner_message})")
+                ssh_ready, ssh_error = wait_for_ssh_ready(
+                    args.name,
+                    timeout=DEFAULT_SSH_READY_TIMEOUT,
+                    process=access_process,
+                )
+                if ssh_ready:
+                    startup_succeeded = True
+                    break
+                print(f"SSH login still not ready on attempt {attempt}: {ssh_error}")
 
-    sync_codex_auth(args.name)
-    update_vscode_remote_extensions()
+            if attempt > DEFAULT_ACCESS_RESTARTS:
+                raise Exception(
+                    f"Timed out waiting for SSH login on host {args.name}. "
+                    f"See local access log: {access_log_path}"
+                )
 
-    # 5. Launch VS Code remote-SSH
-    if not args.no_vscode:
-        print("Launching VS Code with remote SSH connection...")
-        subprocess.Popen(
-            ["code", "--remote", f"ssh-remote+{args.name}", args.workspace],
-            shell=True,
-            creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-        print("VS Code launched. Please wait for the connection to establish...")
-        time.sleep(5)  # Give some time for VS Code to start
+            stop_process(access_process, "local zrok access tunnel")
+            access_process = None
+            print(
+                f"Restarting local zrok access tunnel in {DEFAULT_ACCESS_RESTART_DELAY}s "
+                f"and retrying SSH readiness..."
+            )
+            time.sleep(DEFAULT_ACCESS_RESTART_DELAY)
+
+        if not startup_succeeded:
+            raise Exception(
+                f"Failed to establish SSH on host {args.name}. "
+                f"See local access log: {access_log_path}"
+            )
+
+        print("SSH low-latency options applied:")
+        for option_line in DEFAULT_SSH_LOW_LATENCY_OPTIONS:
+            print(option_line.strip())
+
+        sync_codex_auth(args.name)
+        update_vscode_remote_extensions()
+
+        # 5. Launch VS Code remote-SSH
+        if not args.no_vscode:
+            print("Launching VS Code with remote SSH connection...")
+            subprocess.Popen(
+                ["code", "--remote", f"ssh-remote+{args.name}", args.workspace],
+                shell=True,
+                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            print("VS Code launched. Please wait for the connection to establish...")
+            time.sleep(5)  # Give some time for VS Code to start
+    except Exception:
+        stop_process(access_process, "local zrok access tunnel")
+        raise
 
 
 if __name__ == "__main__":
