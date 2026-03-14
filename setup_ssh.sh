@@ -18,7 +18,7 @@ AUTHORIZED_KEYS_FILE="/kaggle/working/.ssh/authorized_keys"
 SSHD_DROPIN_FILE="/etc/ssh/sshd_config.d/kaggle_remote.conf"
 BASH_RC="$HOME/.bashrc"
 APT_CACHE_DIR="$STATE_DIR/apt-archives"
-APT_SOURCE_DIR="/var/cache/apt/archives"
+APT_DOWNLOAD_DIR="$APT_CACHE_DIR/downloads"
 
 if [ -f "$ENV_VARS_FILE" ]; then
     echo "Exporting environment variables from $ENV_VARS_FILE"
@@ -71,26 +71,32 @@ cache_ssh_packages() {
     mkdir -p "$APT_CACHE_DIR"
     shopt -s nullglob
     for package_file in \
-        "$APT_SOURCE_DIR"/libwrap0_*.deb \
-        "$APT_SOURCE_DIR"/ncurses-term_*.deb \
-        "$APT_SOURCE_DIR"/openssh-client_*.deb \
-        "$APT_SOURCE_DIR"/openssh-server_*.deb \
-        "$APT_SOURCE_DIR"/openssh-sftp-server_*.deb \
-        "$APT_SOURCE_DIR"/runit-helper_*.deb \
-        "$APT_SOURCE_DIR"/ssh-import-id_*.deb; do
+        "$APT_DOWNLOAD_DIR"/*.deb; do
         cp -f "$package_file" "$APT_CACHE_DIR"/
     done
     shopt -u nullglob
 }
 
 has_cached_ssh_packages() {
-    compgen -G "$APT_CACHE_DIR/openssh-server_*.deb" >/dev/null &&
-    compgen -G "$APT_CACHE_DIR/openssh-client_*.deb" >/dev/null &&
-    compgen -G "$APT_CACHE_DIR/openssh-sftp-server_*.deb" >/dev/null
+    compgen -G "$STATE_DIR/**/openssh-server_*.deb" >/dev/null 2>&1 ||
+    compgen -G "$APT_CACHE_DIR/openssh-server_*.deb" >/dev/null 2>&1
+}
+
+collect_cached_ssh_packages() {
+    mkdir -p "$APT_CACHE_DIR"
+    shopt -s globstar nullglob
+    local copied=0
+    for package_file in "$STATE_DIR"/**/*.deb; do
+        cp -f "$package_file" "$APT_CACHE_DIR"/
+        copied=1
+    done
+    shopt -u globstar nullglob
+    [ "$copied" -eq 1 ]
 }
 
 install_cached_ssh_packages() {
-    if ! has_cached_ssh_packages; then
+    collect_cached_ssh_packages >/dev/null 2>&1 || true
+    if ! compgen -G "$APT_CACHE_DIR/openssh-server_*.deb" >/dev/null 2>&1; then
         return 1
     fi
 
@@ -154,8 +160,15 @@ install_packages() {
     fi
 
     echo "Installing openssh-server..."
+    mkdir -p "$APT_DOWNLOAD_DIR"
     DEBIAN_FRONTEND=noninteractive sudo apt-get update
-    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y openssh-server
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --download-only \
+        -o Dir::Cache::archives="$APT_DOWNLOAD_DIR" \
+        openssh-server
+    cache_ssh_packages
+    if ! install_cached_ssh_packages; then
+        DEBIAN_FRONTEND=noninteractive sudo apt-get install -y openssh-server
+    fi
     cache_ssh_packages
 }
 
