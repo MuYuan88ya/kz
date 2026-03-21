@@ -35,28 +35,40 @@ ensure_state_dir() {
     touch "$LOG_FILE"
 }
 
-ensure_persistent_vscode_server() {
+prepare_live_vscode_server_dir() {
     mkdir -p "$PERSISTENT_VSCODE_SERVER_DIR"
 
     if [ -L "$LIVE_VSCODE_SERVER_DIR" ]; then
-        target="$(readlink "$LIVE_VSCODE_SERVER_DIR" || true)"
-        if [ "$target" = "$PERSISTENT_VSCODE_SERVER_DIR" ]; then
-            log "Using persistent VS Code server symlink at $LIVE_VSCODE_SERVER_DIR"
-            return
-        fi
+        log "Removing VS Code server symlink at $LIVE_VSCODE_SERVER_DIR"
         rm -f "$LIVE_VSCODE_SERVER_DIR"
-    elif [ -d "$LIVE_VSCODE_SERVER_DIR" ]; then
-        if find "$LIVE_VSCODE_SERVER_DIR" -mindepth 1 -print -quit >/dev/null 2>&1; then
-            log "Copying existing VS Code server state into $PERSISTENT_VSCODE_SERVER_DIR"
-            cp -a "$LIVE_VSCODE_SERVER_DIR"/. "$PERSISTENT_VSCODE_SERVER_DIR"/
-        fi
-        rm -rf "$LIVE_VSCODE_SERVER_DIR"
-    elif [ -e "$LIVE_VSCODE_SERVER_DIR" ]; then
+    elif [ -e "$LIVE_VSCODE_SERVER_DIR" ] && [ ! -d "$LIVE_VSCODE_SERVER_DIR" ]; then
         rm -rf "$LIVE_VSCODE_SERVER_DIR"
     fi
 
-    ln -s "$PERSISTENT_VSCODE_SERVER_DIR" "$LIVE_VSCODE_SERVER_DIR"
-    log "Persistent VS Code server directory linked: $LIVE_VSCODE_SERVER_DIR -> $PERSISTENT_VSCODE_SERVER_DIR"
+    mkdir -p "$LIVE_VSCODE_SERVER_DIR"
+    if find "$PERSISTENT_VSCODE_SERVER_DIR" -mindepth 1 -print -quit >/dev/null 2>&1; then
+        log "Restoring cached VS Code server state into $LIVE_VSCODE_SERVER_DIR"
+        cp -a "$PERSISTENT_VSCODE_SERVER_DIR"/. "$LIVE_VSCODE_SERVER_DIR"/
+    else
+        log "No cached VS Code server state found; using fresh live directory $LIVE_VSCODE_SERVER_DIR"
+    fi
+}
+
+ensure_vscode_server_permissions() {
+    if [ ! -d "$LIVE_VSCODE_SERVER_DIR" ]; then
+        return
+    fi
+
+    while IFS= read -r executable; do
+        if [ -n "$executable" ]; then
+            chmod +x "$executable" 2>/dev/null || true
+        fi
+    done < <(
+        find "$LIVE_VSCODE_SERVER_DIR" \
+            -type f \
+            \( -name 'code-*' -o -name 'code-server' -o -name 'node' -o -name 'rg' -o -name 'spawn-helper' \) \
+            2>/dev/null
+    )
 }
 
 find_cached_node_dir() {
@@ -284,6 +296,8 @@ set -euo pipefail
 STATE_DIR="/kaggle/working/.kaggle_remote_zrok"
 LOG_FILE="$STATE_DIR/devtools.log"
 MARKER_DIR="$STATE_DIR/vscode-extension-markers"
+PERSISTENT_VSCODE_SERVER_DIR="$STATE_DIR/vscode-server"
+LIVE_VSCODE_SERVER_DIR="$HOME/.vscode-server"
 
 EXTENSIONS=(
     "ms-python.python"
@@ -297,6 +311,32 @@ log() {
 
 mkdir -p "$MARKER_DIR"
 
+sync_vscode_server_cache() {
+    if [ ! -d "$LIVE_VSCODE_SERVER_DIR" ]; then
+        return
+    fi
+
+    mkdir -p "$PERSISTENT_VSCODE_SERVER_DIR"
+    cp -a "$LIVE_VSCODE_SERVER_DIR"/. "$PERSISTENT_VSCODE_SERVER_DIR"/ 2>/dev/null || true
+}
+
+ensure_vscode_server_permissions() {
+    if [ ! -d "$LIVE_VSCODE_SERVER_DIR" ]; then
+        return
+    fi
+
+    while IFS= read -r executable; do
+        if [ -n "$executable" ]; then
+            chmod +x "$executable" 2>/dev/null || true
+        fi
+    done < <(
+        find "$LIVE_VSCODE_SERVER_DIR" \
+            -type f \
+            \( -name 'code-*' -o -name 'code-server' -o -name 'node' -o -name 'rg' -o -name 'spawn-helper' \) \
+            2>/dev/null
+    )
+}
+
 collect_code_servers() {
     find "$HOME/.vscode-server" \
         \( -path '*/bin/code-server' -o -path '*/server/bin/code-server' \) \
@@ -304,6 +344,7 @@ collect_code_servers() {
 }
 
 for _ in $(seq 1 360); do
+    ensure_vscode_server_permissions
     found_server=0
     while IFS= read -r code_server; do
         if [ ! -x "$code_server" ]; then
@@ -332,6 +373,7 @@ for _ in $(seq 1 360); do
 
         if [ "$install_ok" -eq 1 ]; then
             touch "$marker_file"
+            sync_vscode_server_cache
             log "Finished remote VS Code extension install for commit $commit_dir"
         else
             log "Will retry remote VS Code extension install for commit $commit_dir"
@@ -340,6 +382,7 @@ for _ in $(seq 1 360); do
 
     if [ "$found_server" -eq 1 ]; then
         if ls "$MARKER_DIR"/*.done >/dev/null 2>&1; then
+            sync_vscode_server_cache
             exit 0
         fi
     fi
@@ -385,7 +428,8 @@ show_summary() {
 
 main() {
     ensure_state_dir
-    ensure_persistent_vscode_server
+    prepare_live_vscode_server_dir
+    ensure_vscode_server_permissions
     ensure_node_and_npm
     ensure_persistent_npm_prefix
     ensure_codex_cli

@@ -294,7 +294,7 @@ def start_local_access_tunnel(zrok_cli: str, share_token: str, log_path: Path):
 
     with open(log_path, "a", encoding="utf-8", newline="\n") as log_file:
         process = subprocess.Popen(
-            [zrok_cli, "access", "private", share_token],
+            [zrok_cli, "access", "private", share_token, "--headless"],
             stdout=log_file,
             stderr=subprocess.STDOUT,
             creationflags=creationflags,
@@ -537,7 +537,7 @@ def main(args):
 
     try:
         for attempt in range(1, 4):
-            print(f"{zrok.cli} access private {share_token}")
+            print(f"{zrok.cli} access private {share_token} --headless")
             access_process = start_local_access_tunnel(zrok.cli, share_token, access_log_path)
             try:
                 ensure_local_access_ready(args.name, DEFAULT_LOCAL_SSH_PORT, access_process)

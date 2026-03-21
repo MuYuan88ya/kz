@@ -17,6 +17,15 @@ class Zrok:
     OVERVIEW_RETRIES = 5
     OVERVIEW_RETRY_DELAY = 2
 
+    @staticmethod
+    def _text_capture_kwargs():
+        return {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+
     def __init__(self, token: str, name: str = None):
         """Initialize Zrok instance with API token and optional environment name.
         
@@ -88,7 +97,7 @@ class Zrok:
     @staticmethod
     def executable_works(cli_path: str):
         try:
-            subprocess.run([cli_path, "version"], capture_output=True, text=True, check=True)
+            subprocess.run([cli_path, "version"], check=True, **Zrok._text_capture_kwargs())
             return True
         except (subprocess.CalledProcessError, FileNotFoundError, PermissionError):
             return False
@@ -125,9 +134,8 @@ class Zrok:
             try:
                 result = subprocess.run(
                     [self.cli, "overview"],
-                    capture_output=True,
-                    text=True,
                     check=True,
+                    **self._text_capture_kwargs(),
                 )
                 data = json.loads(result.stdout)
                 return data["environments"]
@@ -306,8 +314,7 @@ class Zrok:
                 subprocess.run(
                     [self.cli, "enable", self.token, "-d", env_name],
                     check=True,
-                    capture_output=True,
-                    text=True,
+                    **self._text_capture_kwargs(),
                 )
                 return
             except subprocess.CalledProcessError as error:
@@ -372,8 +379,7 @@ class Zrok:
             subprocess.run(
                 [self.cli, "disable"],
                 check=True,
-                capture_output=True,
-                text=True,
+                **self._text_capture_kwargs(),
             )
         except subprocess.CalledProcessError as error:
             error_text = self._command_error_text(error)
@@ -478,9 +484,8 @@ class Zrok:
         try:
             result = subprocess.run(
                 [Zrok.resolve_executable(), "status"],
-                capture_output=True,
-                text=True,
-                check=True
+                check=True,
+                **Zrok._text_capture_kwargs(),
             )
             # Check if both Account Token and Ziti Identity are set
             return "Account Token  <<SET>>" in result.stdout and "Ziti Identity  <<SET>>" in result.stdout
