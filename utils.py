@@ -427,7 +427,7 @@ class Zrok:
         with tarfile.open(archive_path, "r:gz") as tar:
             members = [
                 item for item in tar.getmembers()
-                if item.isfile() and Path(item.name).name in {"zrok", "zrok.exe"}
+                if item.isfile() and Path(item.name).name in {"zrok", "zrok.exe", "zrok2", "zrok2.exe"}
             ]
             if not members:
                 raise FileNotFoundError("Could not find zrok binary in downloaded archive")

@@ -26,6 +26,24 @@ class ZrokUtilsTests(unittest.TestCase):
             Zrok._extract_archive_to_target(archive, target)
             self.assertEqual(target.read_text(encoding='utf-8'), 'binary')
 
+    def test_extract_archive_to_target_handles_zrok2_binary_name(self):
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            archive = tmp / 'zrok.tar.gz'
+            source_dir = tmp / 'nested'
+            source_dir.mkdir()
+            binary = source_dir / 'zrok2'
+            binary.write_text('binary2', encoding='utf-8')
+            with tarfile.open(archive, 'w:gz') as tar:
+                tar.add(binary, arcname='release/zrok2')
+
+            target = tmp / 'out' / 'zrok'
+            target.parent.mkdir()
+            Zrok._extract_archive_to_target(archive, target)
+            self.assertEqual(target.read_text(encoding='utf-8'), 'binary2')
+
     def test_install_redownloads_when_cached_archive_is_invalid(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = Path(tmpdir)
