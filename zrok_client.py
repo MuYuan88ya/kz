@@ -403,34 +403,61 @@ def sync_codex_auth(host: str):
     local_auth = Path(os.environ["USERPROFILE"]) / ".codex" / "auth.json"
     if not local_auth.exists():
         print(f"Local Codex auth not found at {local_auth}; skipping remote sync")
-        return
+        return False
     if not has_local_identity_file():
         print("Local SSH key not found; skipping remote Codex auth sync")
-        return
+        return False
 
     ssh_exe = resolve_ssh_executable()
     scp_exe = resolve_scp_executable()
+    command_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    common_ssh_options = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "RequestTTY=no",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ConnectionAttempts=1",
+    ]
 
     print("Syncing Codex auth to remote host...")
-    mkdir_result = subprocess.run(
-        [ssh_exe, "-o", "ConnectTimeout=10", host, "mkdir", "-p", "/root/.codex"],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    try:
+        mkdir_result = subprocess.run(
+            [ssh_exe, *common_ssh_options, host, "mkdir", "-p", "/root/.codex"],
+            timeout=10,
+            **command_kwargs,
+        )
+    except subprocess.TimeoutExpired:
+        print("Remote Codex auth sync timed out while creating /root/.codex; skipping sync")
+        return False
     if mkdir_result.returncode != 0:
-        raise Exception(f"Failed to create /root/.codex on remote host {host}")
+        stderr = (mkdir_result.stderr or mkdir_result.stdout or "").strip()
+        print(f"Failed to create /root/.codex on remote host {host}; skipping sync. {stderr}")
+        return False
 
-    copy_result = subprocess.run(
-        [scp_exe, "-o", "ConnectTimeout=10", str(local_auth), f"{host}:/root/.codex/auth.json"],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    try:
+        copy_result = subprocess.run(
+            [scp_exe, *common_ssh_options, str(local_auth), f"{host}:/root/.codex/auth.json"],
+            timeout=10,
+            **command_kwargs,
+        )
+    except subprocess.TimeoutExpired:
+        print("Remote Codex auth sync timed out while copying auth.json; skipping sync")
+        return False
     if copy_result.returncode != 0:
-        raise Exception(f"Failed to copy Codex auth.json to remote host {host}")
+        stderr = (copy_result.stderr or copy_result.stdout or "").strip()
+        print(f"Failed to copy Codex auth.json to remote host {host}; skipping sync. {stderr}")
+        return False
 
     print("Codex auth synced to /root/.codex/auth.json")
+    return True
 
 
 def main(args):
