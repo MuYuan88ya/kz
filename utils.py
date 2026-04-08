@@ -399,6 +399,50 @@ class Zrok:
             print("failed to delete remote zrok environment; continuing")
 
     @staticmethod
+    def _download_latest_linux_archive(cache_dir: Path) -> Path:
+        print("Downloading latest zrok release")
+        response = urllib.request.urlopen("https://api.github.com/repos/openziti/zrok/releases/latest")
+        data = json.loads(response.read())
+
+        download_url = None
+        for asset in data["assets"]:
+            if "linux_amd64.tar.gz" in asset["browser_download_url"]:
+                download_url = asset["browser_download_url"]
+                break
+
+        if not download_url:
+            raise FileNotFoundError("Could not find zrok download URL for linux_amd64")
+
+        archive_path = cache_dir / "zrok.tar.gz"
+        with tempfile.TemporaryDirectory(dir=str(cache_dir)) as temp_dir:
+            download_path = Path(temp_dir) / "zrok.tar.gz"
+            urllib.request.urlretrieve(download_url, download_path)
+            shutil.copy2(download_path, archive_path)
+
+        return archive_path
+
+    @staticmethod
+    def _extract_archive_to_target(archive_path: Path, target_path: Path):
+        print(f"Extracting zrok to {target_path}")
+        with tarfile.open(archive_path, "r:gz") as tar:
+            members = [
+                item for item in tar.getmembers()
+                if item.isfile() and Path(item.name).name in {"zrok", "zrok.exe"}
+            ]
+            if not members:
+                raise FileNotFoundError("Could not find zrok binary in downloaded archive")
+
+            member = members[0]
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise FileNotFoundError("Could not extract zrok binary from downloaded archive")
+
+            with open(target_path, "wb") as output_file:
+                shutil.copyfileobj(extracted, output_file)
+
+        target_path.chmod(0o755)
+
+    @staticmethod
     def install():
         """Install the latest version of zrok.
         
@@ -424,40 +468,19 @@ class Zrok:
         archive_path = Zrok.cached_archive_path()
         if archive_path is not None:
             print(f"Extracting cached zrok archive from {archive_path}")
+            try:
+                Zrok._extract_archive_to_target(archive_path, target_path)
+            except FileNotFoundError:
+                print(f"Cached archive {archive_path} did not contain a usable zrok binary; re-downloading latest release...")
+                try:
+                    archive_path.unlink()
+                except OSError:
+                    pass
+                archive_path = Zrok._download_latest_linux_archive(cache_dir)
+                Zrok._extract_archive_to_target(archive_path, target_path)
         else:
-            print("Downloading latest zrok release")
-            response = urllib.request.urlopen("https://api.github.com/repos/openziti/zrok/releases/latest")
-            data = json.loads(response.read())
-
-            download_url = None
-            for asset in data["assets"]:
-                if "linux_amd64.tar.gz" in asset["browser_download_url"]:
-                    download_url = asset["browser_download_url"]
-                    break
-
-            if not download_url:
-                raise FileNotFoundError("Could not find zrok download URL for linux_amd64")
-
-            archive_path = cache_dir / "zrok.tar.gz"
-            with tempfile.TemporaryDirectory(dir=str(cache_dir)) as temp_dir:
-                download_path = Path(temp_dir) / "zrok.tar.gz"
-                urllib.request.urlretrieve(download_url, download_path)
-                shutil.copy2(download_path, archive_path)
-
-        print(f"Extracting zrok to {target_path}")
-        with tarfile.open(archive_path, "r:gz") as tar:
-            member = next((item for item in tar.getmembers() if Path(item.name).name == "zrok"), None)
-            if member is None:
-                raise FileNotFoundError("Could not find zrok binary in downloaded archive")
-
-            extracted = tar.extractfile(member)
-            if extracted is None:
-                raise FileNotFoundError("Could not extract zrok binary from downloaded archive")
-
-            with open(target_path, "wb") as output_file:
-                shutil.copyfileobj(extracted, output_file)
-
-        target_path.chmod(0o755)
+            archive_path = Zrok._download_latest_linux_archive(cache_dir)
+            Zrok._extract_archive_to_target(archive_path, target_path)
 
         # Check if zrok is installed correctly
         if not Zrok.is_installed():
