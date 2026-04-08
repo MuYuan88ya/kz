@@ -612,7 +612,7 @@ def write_ssh_config(host_alias: str, local_port: int, paths: ClientPaths) -> No
         new_content += entry + "\n"
         print(f"SSH config created for {host_alias}")
 
-    paths.ssh_config.write_text(new_content, encoding="utf-8", newline="")
+    paths.ssh_config.write_text(new_content, encoding="utf-8")
     apply_windows_file_permissions(paths.ssh_config)
 
 

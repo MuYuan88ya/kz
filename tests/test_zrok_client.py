@@ -50,6 +50,17 @@ class ZrokClientTests(unittest.TestCase):
             self.assertIn('PreferredAuthentications password', entry)
             self.assertIn('PubkeyAuthentication no', entry)
 
+    def test_write_ssh_config_smoke(self):
+        from zrok_client import write_ssh_config
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = ClientPaths.from_home(Path(tmpdir))
+            paths.ssh_dir.mkdir(parents=True, exist_ok=True)
+            write_ssh_config('kaggle_client', 9191, paths)
+            content = paths.ssh_config.read_text(encoding='utf-8')
+            self.assertIn('Host kaggle_client', content)
+            self.assertIn('Port 9191', content)
+
     def test_build_vscode_launch_command_windows(self):
         command, kwargs = build_vscode_launch_command(
             host='kaggle_client',
