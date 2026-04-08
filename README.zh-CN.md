@@ -182,6 +182,36 @@ python zrok_client.py start --ssh-only
 
 只是不会自动启动 VS Code。
 
+### SSH-only 连接示例
+
+隧道准备好之后，你可以直接使用普通 SSH 工具连接。
+
+#### 打开交互式 shell
+
+```bash
+ssh kaggle_client
+```
+
+#### 远程执行单条命令
+
+```bash
+ssh kaggle_client "cd /kaggle/working && pwd && ls"
+```
+
+#### 从 Kaggle 下载文件到本地
+
+```bash
+scp kaggle_client:/kaggle/working/your-file.txt ./your-file.txt
+```
+
+#### 从本地上传文件到 Kaggle
+
+```bash
+scp ./local-file.txt kaggle_client:/kaggle/working/local-file.txt
+```
+
+如果你使用了不同的 host 名，请把上面的 `kaggle_client` 替换成你通过 `--name` 传入的值。
+
 ## 日常使用流程
 
 如果初始化已经成功做过一次，之后的日常使用通常只需要两步。

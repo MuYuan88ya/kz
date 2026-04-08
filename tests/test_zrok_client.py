@@ -7,6 +7,7 @@ from zrok_client import (
     build_kaggle_init_command,
     build_ssh_config_entry,
     build_vscode_launch_command,
+    find_macos_vscode_cli,
     normalize_argv,
     should_attempt_auto_install_zrok,
 )
@@ -71,14 +72,48 @@ class ZrokClientTests(unittest.TestCase):
         self.assertEqual(command, ['code', '--remote', 'ssh-remote+kaggle_client', '/kaggle/working'])
         self.assertIn('creationflags', kwargs)
 
+    def test_find_macos_vscode_cli(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cli = Path(tmpdir) / 'code'
+            cli.write_text('fake', encoding='utf-8')
+            cli.chmod(0o755)
+            self.assertEqual(find_macos_vscode_cli([cli]), str(cli))
+
+    def test_build_vscode_launch_command_macos_bundled_cli(self):
+        import zrok_client
+        original = zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cli = Path(tmpdir) / 'code'
+            cli.write_text('fake', encoding='utf-8')
+            cli.chmod(0o755)
+            zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES = [cli]
+            try:
+                command, kwargs = build_vscode_launch_command(
+                    host='kaggle_client',
+                    workspace='/kaggle/working',
+                    system_name='Darwin',
+                    code_executable='',
+                    open_executable='/usr/bin/open',
+                )
+            finally:
+                zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES = original
+        self.assertEqual(command, [str(cli), '--remote', 'ssh-remote+kaggle_client', '/kaggle/working'])
+        self.assertEqual(kwargs, {})
+
     def test_build_vscode_launch_command_macos_fallback(self):
-        command, kwargs = build_vscode_launch_command(
-            host='kaggle_client',
-            workspace='/kaggle/working',
-            system_name='Darwin',
-            code_executable='',
-            open_executable='/usr/bin/open',
-        )
+        import zrok_client
+        original = zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES
+        zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES = []
+        try:
+            command, kwargs = build_vscode_launch_command(
+                host='kaggle_client',
+                workspace='/kaggle/working',
+                system_name='Darwin',
+                code_executable='',
+                open_executable='/usr/bin/open',
+            )
+        finally:
+            zrok_client.MACOS_VSCODE_BUNDLED_CLI_CANDIDATES = original
         self.assertEqual(
             command,
             ['/usr/bin/open', '-a', 'Visual Studio Code', '--args', '--remote', 'ssh-remote+kaggle_client', '/kaggle/working'],

@@ -42,6 +42,11 @@ DEFAULT_SSH_LOW_LATENCY_OPTIONS = [
     "    LogLevel ERROR",
 ]
 
+MACOS_VSCODE_BUNDLED_CLI_CANDIDATES = [
+    Path("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"),
+    Path("/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"),
+]
+
 
 @dataclass(frozen=True)
 class ClientPaths:
@@ -714,9 +719,19 @@ def sync_codex_auth(host: str, paths: ClientPaths) -> bool:
     return True
 
 
+def find_macos_vscode_cli(candidates: Optional[Sequence[Path]] = None) -> Optional[str]:
+    for candidate in list(candidates or MACOS_VSCODE_BUNDLED_CLI_CANDIDATES):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def build_vscode_launch_command(host: str, workspace: str, system_name: Optional[str] = None, code_executable: Optional[str] = None, open_executable: Optional[str] = None) -> Tuple[List[str], dict]:
     resolved_system = current_platform(system_name)
     code_binary = code_executable if code_executable is not None else shutil.which("code")
+
+    if not code_binary and resolved_system == "Darwin":
+        code_binary = find_macos_vscode_cli()
 
     if code_binary:
         creationflags = 0

@@ -182,6 +182,36 @@ In SSH-only mode, the client still:
 
 It simply skips launching VS Code.
 
+### SSH-only connection examples
+
+After the tunnel is ready, you can connect directly with normal SSH tools.
+
+#### Open an interactive shell
+
+```bash
+ssh kaggle_client
+```
+
+#### Run one command remotely
+
+```bash
+ssh kaggle_client "cd /kaggle/working && pwd && ls"
+```
+
+#### Copy a file from the Kaggle side to local
+
+```bash
+scp kaggle_client:/kaggle/working/your-file.txt ./your-file.txt
+```
+
+#### Upload a local file to Kaggle
+
+```bash
+scp ./local-file.txt kaggle_client:/kaggle/working/local-file.txt
+```
+
+If you prefer a different host name, replace `kaggle_client` with the value you passed through `--name`.
+
 ## Later Use Flow
 
 After init has succeeded once, each later session is only two steps.
